@@ -1,0 +1,1047 @@
+'use strict';
+'require baseclass';
+'require fs';
+'require ui';
+'require uci';
+'require rpc';
+'require network';
+'require firewall';
+'require dom';
+'require poll';
+
+var callGetBuiltinEthernetPorts = rpc.declare({
+	object: 'luci',
+	method: 'getBuiltinEthernetPorts',
+	expect: { result: [] }
+});
+
+var callWritePortConfig = rpc.declare({
+	object: 'file',
+	method: 'write',
+	params: ['path', 'data'],
+	expect: { }
+});
+
+var USER_PORTS_FILE = '/etc/user_defined_ports.json';
+var isDragging = false;
+var draggedElement = null;
+var originalPorts = [];
+
+function popTimeout(a, message, timeout, severity) {
+    ui.addTimeLimitedNotification(a, message, timeout, severity)
+}
+
+function isString(v)
+{
+	return typeof(v) === 'string' && v !== '';
+}
+
+function resolveVLANChain(ifname, bridges, mapping)
+{
+	while (!mapping[ifname]) {
+		var m = ifname.match(/^(.+)\.([^.]+)$/);
+
+		if (!m)
+			break;
+
+		if (bridges[m[1]]) {
+			if (bridges[m[1]].vlan_filtering)
+				mapping[ifname] = bridges[m[1]].vlans[m[2]];
+			else
+				mapping[ifname] = bridges[m[1]].ports;
+		}
+		else if (/^[0-9]{1,4}$/.test(m[2]) && m[2] <= 4095) {
+			mapping[ifname] = [ m[1] ];
+		}
+		else {
+			break;
+		}
+
+		ifname = m[1];
+	}
+}
+
+function buildVLANMappings(mapping)
+{
+	var bridge_vlans = uci.sections('network', 'bridge-vlan'),
+	    vlan_devices = uci.sections('network', 'device'),
+	    interfaces = uci.sections('network', 'interface'),
+	    bridges = {};
+
+	/* find bridge VLANs */
+	for (var i = 0, s; (s = bridge_vlans[i]) != null; i++) {
+		if (!isString(s.device) || !/^[0-9]{1,4}$/.test(s.vlan) || +s.vlan > 4095)
+			continue;
+
+		var aliases = L.toArray(s.alias),
+		    ports = L.toArray(s.ports),
+		    br = bridges[s.device] = (bridges[s.device] || { ports: [], vlans: {}, vlan_filtering: true });
+
+		br.vlans[s.vlan] = [];
+
+		for (var j = 0; j < ports.length; j++) {
+			var port = ports[j].replace(/:[ut*]+$/, '');
+
+			if (br.ports.indexOf(port) === -1)
+				br.ports.push(port);
+
+			br.vlans[s.vlan].push(port);
+		}
+
+		for (var j = 0; j < aliases.length; j++)
+			if (aliases[j] != s.vlan)
+				br.vlans[aliases[j]] = br.vlans[s.vlan];
+	}
+
+	/* find bridges, VLAN devices */
+	for (var i = 0, s; (s = vlan_devices[i]) != null; i++) {
+		if (s.type == 'bridge') {
+			if (!isString(s.name))
+				continue;
+
+			var ports = L.toArray(s.ports),
+			    br = bridges[s.name] || (bridges[s.name] = { ports: [], vlans: {}, vlan_filtering: false });
+
+			if (s.vlan_filtering == '0')
+				br.vlan_filtering = false;
+			else if (s.vlan_filtering == '1')
+				br.vlan_filtering = true;
+
+			for (var j = 0; j < ports.length; j++)
+				if (br.ports.indexOf(ports[j]) === -1)
+					br.ports.push(ports[j]);
+
+			mapping[s.name] = br.ports;
+		}
+		else if (s.type == '8021q' || s.type == '8021ad') {
+			if (!isString(s.name) || !isString(s.vid) || !isString(s.ifname))
+				continue;
+
+			/* parent device is a bridge */
+			if (bridges[s.ifname]) {
+				/* parent bridge is VLAN enabled, device refers to VLAN ports */
+				if (bridges[s.ifname].vlan_filtering)
+					mapping[s.name] = bridges[s.ifname].vlans[s.vid];
+
+				/* parent bridge is not VLAN enabled, device refers to all bridge ports */
+				else
+					mapping[s.name] = bridges[s.ifname].ports;
+			}
+
+			/* parent is a simple netdev */
+			else {
+				mapping[s.name] = [ s.ifname ];
+			}
+
+			resolveVLANChain(s.ifname, bridges, mapping);
+		}
+	}
+
+	/* resolve VLAN tagged interfaces in bridge ports */
+	for (var brname in bridges) {
+		for (var i = 0; i < bridges[brname].ports.length; i++)
+			resolveVLANChain(bridges[brname].ports[i], bridges, mapping);
+
+		for (var vid in bridges[brname].vlans)
+			for (var i = 0; i < bridges[brname].vlans[vid].length; i++)
+				resolveVLANChain(bridges[brname].vlans[vid][i], bridges, mapping);
+	}
+
+	/* find implicit VLAN devices */
+	for (var i = 0, s; (s = interfaces[i]) != null; i++) {
+		if (!isString(s.device))
+			continue;
+
+		resolveVLANChain(s.device, bridges, mapping);
+	}
+}
+
+function resolveVLANPorts(ifname, mapping, seen)
+{
+	var ports = [];
+
+	if (!seen)
+		seen = {};
+
+	if (mapping[ifname]) {
+		for (var i = 0; i < mapping[ifname].length; i++) {
+			if (!seen[mapping[ifname][i]]) {
+				seen[mapping[ifname][i]] = true;
+				ports.push.apply(ports, resolveVLANPorts(mapping[ifname][i], mapping, seen));
+			}
+		}
+	}
+	else {
+		ports.push(ifname);
+	}
+
+	return ports.sort(L.naturalCompare);
+}
+
+function buildInterfaceMapping(zones, networks) {
+	var vlanmap = {},
+	    portmap = {},
+	    netmap = {};
+
+	buildVLANMappings(vlanmap);
+
+	for (var i = 0; i < networks.length; i++) {
+		var l3dev = networks[i].getDevice();
+
+		if (!l3dev)
+			continue;
+
+		var ports = resolveVLANPorts(l3dev.getName(), vlanmap);
+
+		for (var j = 0; j < ports.length; j++) {
+			portmap[ports[j]] = portmap[ports[j]] || { networks: [], zones: [] };
+			portmap[ports[j]].networks.push(networks[i]);
+		}
+
+		netmap[networks[i].getName()] = networks[i];
+	}
+
+	for (var i = 0; i < zones.length; i++) {
+		var networknames = zones[i].getNetworks();
+
+		for (var j = 0; j < networknames.length; j++) {
+			if (!netmap[networknames[j]])
+				continue;
+
+			var l3dev = netmap[networknames[j]].getDevice();
+
+			if (!l3dev)
+				continue;
+
+			var ports = resolveVLANPorts(l3dev.getName(), vlanmap);
+
+			for (var k = 0; k < ports.length; k++) {
+				portmap[ports[k]] = portmap[ports[k]] || { networks: [], zones: [] };
+
+				if (portmap[ports[k]].zones.indexOf(zones[i]) === -1)
+					portmap[ports[k]].zones.push(zones[i]);
+			}
+		}
+	}
+
+	return portmap;
+}
+
+function formatSpeed(carrier, speed, duplex) {
+	if ((speed > 0) && duplex) {
+		var d = (duplex == 'half') ? '\u202f(H)' : '',
+		    e = E('span', { 'title': _('Speed: %d Mibit/s, Duplex: %s').format(speed, duplex) });
+
+		switch (true) {
+		case (speed < 1000):
+			e.innerText = '%d\u202fM%s'.format(speed, d);
+			break;
+		case (speed == 1000):
+			e.innerText = '1\u202fGbE' + d;
+			break;
+		case (speed >= 1e6 && speed < 1e9):
+			e.innerText = '%f\u202fTbE'.format(speed / 1e6);
+			break;
+		case (speed >= 1e9):
+			e.innerText = '%f\u202fPbE'.format(speed / 1e9);
+			break;
+		default: e.innerText = '%f\u202fGbE'.format(speed / 1000);
+		}
+
+		return e;
+	}
+
+	return carrier ? _('Connected') : _('no link');
+}
+
+function formatStats(portdev) {
+	var stats = portdev._devstate('stats') || {};
+
+	return ui.itemlist(E('span'), [
+		_('Received bytes'), '%1024mB'.format(stats.rx_bytes),
+		_('Received packets'), '%1000mPkts.'.format(stats.rx_packets),
+		_('Received multicast'), '%1000mPkts.'.format(stats.multicast),
+		_('Receive errors'), '%1000mPkts.'.format(stats.rx_errors),
+		_('Receive dropped'), '%1000mPkts.'.format(stats.rx_dropped),
+
+		_('Transmitted bytes'), '%1024mB'.format(stats.tx_bytes),
+		_('Transmitted packets'), '%1000mPkts.'.format(stats.tx_packets),
+		_('Transmit errors'), '%1000mPkts.'.format(stats.tx_errors),
+		_('Transmit dropped'), '%1000mPkts.'.format(stats.tx_dropped),
+
+		_('Collisions seen'), stats.collisions
+	]);
+}
+
+function renderNetworkBadge(network, zonename) {
+	var l3dev = network.getDevice();
+	var span = E('span', { 'class': 'ifacebadge', 'style': 'margin:.125em 0' }, [
+		E('span', {
+			'class': 'zonebadge',
+			'title': zonename ? _('Part of zone %q').format(zonename) : _('No zone assigned'),
+			'style': firewall.getZoneColorStyle(zonename)
+		}, '\u202f'),
+		'\u202f', network.getName(), ': '
+	]);
+
+	if (l3dev)
+		span.appendChild(E('img', {
+			'title': l3dev.getI18n(),
+			'src': L.resource('icons/%s%s.svg'.format(l3dev.getType(), l3dev.isUp() ? '' : '_disabled'))
+		}));
+	else
+		span.appendChild(E('em', _('(no interfaces attached)')));
+
+	return span;
+}
+
+function renderNetworksTooltip(pmap) {
+	var res = [ null ],
+	    zmap = {};
+
+	for (var i = 0; pmap && i < pmap.zones.length; i++) {
+		var networknames = pmap.zones[i].getNetworks();
+
+		for (var k = 0; k < networknames.length; k++)
+			zmap[networknames[k]] = pmap.zones[i].getName();
+	}
+
+	for (var i = 0; pmap && i < pmap.networks.length; i++)
+		res.push(E('br'), renderNetworkBadge(pmap.networks[i], zmap[pmap.networks[i].getName()]));
+
+	if (res.length > 1)
+		res[0] = N_((res.length - 1) / 2, 'Part of network:', 'Part of networks:');
+	else
+		res[0] = _('Port is not part of any network');
+
+	return E([], res);
+}
+
+function loadUserPorts() {
+	return L.resolveDefault(fs.read(USER_PORTS_FILE), null).then(function(content) {
+		if (!content) {
+			console.log('User ports file not found, will be created on first save');
+			return null;
+		}
+		
+		try {
+			var parsed = JSON.parse(content);
+			console.log('Successfully loaded user ports config');
+			return parsed;
+		} catch(e) {
+			console.error('Failed to parse user ports config:', e);
+			return null;
+		}
+	}).catch(function(err) {
+		console.log('User ports file does not exist yet:', err);
+		return null;
+	});
+}
+
+function saveUserPorts(ports) {
+	var config = ports.map(function(port) {
+		return {
+			device: port.device,
+			label: port.label || port.device,
+			role: port.role,
+			originalLabel: port.originalLabel || port.device,
+			description: port.description || ''
+		};
+	});
+	
+	var jsonContent = JSON.stringify(config, null, 2);
+	
+	// fs.write
+	return fs.write(USER_PORTS_FILE, jsonContent).then(function() {
+		console.log('Port configuration saved successfully to', USER_PORTS_FILE);
+		return true;
+	}).catch(function(err) {
+		console.warn('fs.write failed, trying exec method:', err);
+		
+		// fs.exec
+		return fs.exec('/bin/sh', ['-c', 'echo \'' + jsonContent.replace(/'/g, "'\\''") + '\' > ' + USER_PORTS_FILE]).then(function(res) {
+			if (res.code === 0) {
+				console.log('Port configuration saved via exec');
+				return true;
+			} else {
+				throw new Error('exec write failed with code ' + res.code);
+			}
+		}).catch(function(err2) {
+			console.error('Both write methods failed:', err2);
+			
+			// folder permissions
+			return fs.stat('/etc').then(function(stat) {
+				var errorMsg = _('Cannot save port configuration. ') + 
+				               _('Directory /etc may be read-only or insufficient permissions. ') + 
+				               _('Try running: chmod 755 /etc && touch %s && chmod 644 %s').format(USER_PORTS_FILE, USER_PORTS_FILE);
+				
+				ui.addNotification(null, E('p', {}, [
+					E('strong', {}, _('Save Error')),
+					E('br'),
+					errorMsg,
+					E('br'),
+					E('small', {}, _('Original error: %s').format(err.message))
+				]), 'error');
+				
+				throw new Error(errorMsg);
+			});
+		});
+	});
+}
+
+function mergePortConfigs(detectedPorts, userConfig) {
+	if (!userConfig || !Array.isArray(userConfig))
+		return detectedPorts;
+	
+	var userMap = {};
+	userConfig.forEach(function(p) {
+		userMap[p.device] = p;
+	});
+	
+	var merged = [];
+	var addedDevices = {};
+	
+	/* Ports from user config */
+	userConfig.forEach(function(userPort) {
+		var detected = detectedPorts.find(function(p) { return p.device === userPort.device; });
+		if (detected) {
+			merged.push({
+				device: detected.device,
+				role: detected.role,
+				netdev: detected.netdev,
+				label: userPort.label || detected.device,
+				originalLabel: userPort.originalLabel || detected.device,
+				description: userPort.description || ''
+			});
+			addedDevices[userPort.device] = true;
+		}
+	});
+
+	detectedPorts.forEach(function(port) {
+		if (!addedDevices[port.device]) {
+			merged.push({
+				device: port.device,
+				role: port.role,
+				netdev: port.netdev,
+				label: port.device,
+				originalLabel: port.originalLabel || port.device,
+				description: ''
+			});
+		}
+	});
+	
+	return merged;
+}
+
+function showEditLabelModal(port, labelElement, descriptionElement, ports) {
+	poll.stop();
+	
+	var modalTitle = _('Edit Port Label');
+	var currentLabel = port.label || port.device;
+	var currentDescription = port.description || '';
+	var originalLabel = port.originalLabel || port.device;
+	
+	var labelInputEl = E('input', {
+		'type': 'text',
+		'class': 'cbi-input-text',
+		'value': currentLabel,
+		'style': 'width: 100%; margin-bottom: 1em;',
+		'placeholder': port.device,
+		'maxlength': '9'
+	});
+	
+	var descriptionInputEl = E('input', {
+		'type': 'text',
+		'class': 'cbi-input-text',
+		'value': currentDescription,
+		'style': 'width: 100%; margin-bottom: 1em;',
+		'placeholder': _(''),
+		'maxlength': '50'
+	});
+	
+	var infoText = E('p', { 'style': 'margin: 0.5em 0; font-size: 90%; color: var(--text-color-secondary);' }, [
+		_('Device')+': ',
+		E('strong', {}, port.device),
+		E('br'),
+		_('Original label')+': ',
+		E('strong', {}, originalLabel),
+		E('br'),
+		E('small', {}, _('Label max 9 chars, description max 50 chars.')),
+		E('br'),
+		E('small', {}, _('User settings are saved to the /etc/user_defined_ports.json file.'))
+	]);
+	
+	var modalContent = E('div', {}, [
+		E('p', {}, _('Enter new label for this port:')),
+		labelInputEl,
+		E('p', { 'style': 'margin-top: 1em;' }, _('Enter description (optional):')),
+		descriptionInputEl,
+		infoText
+	]);
+	
+	var restoreBtn = E('button', {
+		'class': 'cbi-button cbi-button-neutral',
+		'click': function(ev) {
+			labelInputEl.value = originalLabel;
+			descriptionInputEl.value = '';
+			ev.target.blur();
+			labelInputEl.focus();
+		}
+	}, _('Restore Original'));
+	
+	var handleDownloadConfig = function() {
+		L.resolveDefault(fs.read(USER_PORTS_FILE), null).then(function(content) {
+			if (content) {
+				var link = E('a', {
+					'download': 'user_defined_ports.json',
+					'href': URL.createObjectURL(new Blob([content], {
+						type: 'application/json'
+					}))
+				});
+				link.click();
+				URL.revokeObjectURL(link.href);
+				popTimeout(null, E('p', _('Configuration file downloaded')), 3000, 'info');
+			} else {
+				ui.addNotification(null, E('p', _('Configuration file not found')), 'warning');
+			}
+		}).catch(function(err) {
+			ui.addNotification(null, E('p', _('Download error: %s').format(err.message)), 'error');
+		});
+	};
+	
+	var handleUploadConfig = function(ev) {
+		var fileInput = E('input', {
+			'type': 'file',
+			'accept': '.json',
+			'style': 'display: none',
+			'change': function(e) {
+				var file = e.target.files[0];
+				if (!file) return;
+				
+				var reader = new FileReader();
+				reader.onload = function(event) {
+					try {
+						var config = JSON.parse(event.target.result);
+						
+						if (!Array.isArray(config)) {
+							throw new Error(_('Invalid configuration format'));
+						}
+						
+						ui.showModal(_('Restore configuration'), [
+							E('p', _('This will overwrite current ports configuration. Continue?')),
+							E('div', { 'class': 'right' }, [
+								E('button', {
+									'class': 'cbi-button cbi-button-neutral',
+									'click': function() {
+										ui.hideModal();
+										poll.start();
+									}
+								}, _('Cancel')),
+								' ',
+								E('button', {
+									'class': 'cbi-button cbi-button-positive',
+									'click': function() {
+										fs.write(USER_PORTS_FILE, JSON.stringify(config, null, 2)).then(function() {
+											ui.hideModal();
+											popTimeout(null, E('p', _('Configuration restored successfully. Reloading...')), 3000, 'info');
+											setTimeout(function() {
+												window.location.reload();
+											}, 1500);
+										}).catch(function(err) {
+											ui.hideModal();
+											ui.addNotification(null, E('p', _('File restore failed: %s').format(err.message)), 'error');
+											poll.start();
+										});
+									}
+								}, _('Restore'))
+							])
+						]);
+					} catch(err) {
+						ui.addNotification(null, E('p', _('Invalid JSON file: %s').format(err.message)), 'error');
+					}
+				};
+				reader.readAsText(file);
+			}
+		});
+		
+		document.body.appendChild(fileInput);
+		fileInput.click();
+		document.body.removeChild(fileInput);
+	};
+	
+	var backupComboButton = new ui.ComboButton('_save', {
+		'_save': _('Save .json file'),
+		'_upload': _('Upload .json file')
+	}, {
+		'click': function(ev, name) {
+			if (name === '_save') {
+				handleDownloadConfig();
+			} else if (name === '_upload') {
+				handleUploadConfig(ev);
+			}
+		},
+		'classes': {
+			'_save': 'cbi-button cbi-button-neutral',
+			'_upload': 'cbi-button cbi-button-neutral'
+		}
+	}).render();
+	
+	ui.showModal(modalTitle, [
+		modalContent,
+		E('div', { 'style': 'display: flex; justify-content: space-between; align-items: center;' }, [
+			E('div', {}, [
+				backupComboButton
+			]),
+			E('div', { 'class': 'right' }, [
+				restoreBtn,
+				' ',
+				E('button', {
+					'class': 'cbi-button cbi-button-neutral',
+					'click': function() {
+						ui.hideModal();
+						poll.start();
+					}
+				}, _('Cancel')),
+				' ',
+				E('button', {
+					'class': 'cbi-button cbi-button-positive',
+					'click': function() {
+						var newLabel = labelInputEl.value.trim();
+						var newDescription = descriptionInputEl.value.trim();
+						
+						if (newLabel === '') {
+							newLabel = port.device;
+						}
+						
+						port.label = newLabel;
+						port.description = newDescription;
+						labelElement.textContent = newLabel;
+						
+						if (newDescription) {
+							descriptionElement.textContent = newDescription;
+							descriptionElement.style.display = 'block';
+						} else {
+							descriptionElement.textContent = '';
+							descriptionElement.style.display = 'none';
+						}
+						
+						ui.showModal(null, E('p', { 'class': 'spinning' }, _('Saving configuration...')));
+						
+						saveUserPorts(ports).then(function() {
+							ui.hideModal();
+							popTimeout(null, E('p', _('Port configuration saved successfully')), 5000, 'info');
+							poll.start();
+						}).catch(function(err) {
+							ui.hideModal();
+							poll.start();
+						});
+					}
+				}, _('Save'))
+			])
+		])
+	]);
+	
+	setTimeout(function() {
+		labelInputEl.focus();
+		labelInputEl.select();
+	}, 100);
+	
+	var handleKeydown = function(ev) {
+		if (ev.key === 'Enter') {
+			ev.preventDefault();
+			var saveBtn = modalContent.parentNode.querySelector('.cbi-button-positive');
+			if (saveBtn) {
+				saveBtn.click();
+			}
+		} else if (ev.key === 'Escape') {
+			ev.preventDefault();
+			ui.hideModal();
+			poll.start();
+		}
+	};
+	
+	labelInputEl.addEventListener('keydown', handleKeydown);
+	descriptionInputEl.addEventListener('keydown', handleKeydown);
+}
+
+function makeEditable(element, descriptionElement, port, ports) {
+	element.style.cursor = 'pointer';
+	element.title = _('Click to edit label');
+	
+	element.addEventListener('click', function(ev) {
+		if (isDragging)
+			return;
+		
+		ev.stopPropagation();
+		ev.preventDefault();
+		
+		showEditLabelModal(port, element, descriptionElement, ports);
+	});
+}
+
+function makeDraggable(element, port, container, ports) {
+    var dragHandle = E('div', {
+        'class': 'drag-handle',
+        'style': 'position: absolute; top: 0; left: 0; right: 0; bottom: 0; cursor: move; z-index: 1; pointer-events: none;',
+        'title': _('Hold to drag and reorder')
+    });
+
+    element.style.position = 'relative';
+    element.appendChild(dragHandle);
+
+    var clickTimer = null;
+    var clickStart = null;
+    var hasMoved = false;
+    var isTouch = false;
+
+    function startDrag(ev) {
+        isDragging = true;
+        draggedElement = element;
+        poll.stop();
+
+        element.style.opacity = '0.5';
+        element.style.zIndex = '1000';
+        dragHandle.style.cursor = 'move';
+        dragHandle.style.pointerEvents = 'auto';
+
+        document.body.style.cursor = 'move';
+
+        var placeholder = E('div', {
+            'class': 'ifacebox drag-placeholder',
+            'style': element.style.cssText + 'opacity: 0.3; border: 3px dashed var(--border-color-medium); background: var(--border-color-low);'
+        });
+
+        element.style.boxShadow = '0 5px 15px var(--border-color-strong)';
+
+        function onMouseMove(e) {
+            if (isTouch && e.cancelable) {
+                e.preventDefault();
+            }
+            
+            var clientX = e.clientX;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+            }
+            
+            var afterElement = getDragAfterElement(container, clientX);
+            if (afterElement == null) {
+                container.appendChild(placeholder);
+            } else {
+                container.insertBefore(placeholder, afterElement);
+            }
+        }
+
+        function onMouseUp(e) {
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            document.removeEventListener('touchmove', onMouseMove, { passive: false });
+            document.removeEventListener('touchend', onMouseUp);
+
+            var clientX = e.clientX;
+            if (e.changedTouches && e.changedTouches.length > 0) {
+                clientX = e.changedTouches[0].clientX;
+            }
+            
+            var afterElement = getDragAfterElement(container, clientX);
+            if (afterElement == null) {
+                container.appendChild(element);
+            } else {
+                container.insertBefore(element, afterElement);
+            }
+
+            if (placeholder.parentNode)
+                placeholder.parentNode.removeChild(placeholder);
+
+            element.style.opacity = '1';
+            element.style.zIndex = '';
+            element.style.boxShadow = '';
+            dragHandle.style.cursor = 'move';
+            dragHandle.style.pointerEvents = 'none';
+            document.body.style.cursor = '';
+
+            var newOrder = Array.from(container.children).map(function(el) {
+                return el.__port__;
+            }).filter(function(p) { return p; });
+
+            ports.length = 0;
+            newOrder.forEach(function(p) { ports.push(p); });
+
+            saveUserPorts(ports).then(function() {
+                isDragging = false;
+                draggedElement = null;
+                isTouch = false;
+                popTimeout(null, E('p', _('Port order saved')), 5000, 'info');
+                poll.start();
+            }).catch(function(err) {
+                isDragging = false;
+                draggedElement = null;
+                isTouch = false;
+                poll.start();
+            });
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        document.addEventListener('touchmove', onMouseMove, { passive: false });
+        document.addEventListener('touchend', onMouseUp);
+    }
+
+    function getDragAfterElement(container, x) {
+        var draggableElements = Array.from(container.children).filter(function(child) {
+            return child !== draggedElement && child.classList.contains('ifacebox');
+        });
+
+        return draggableElements.reduce(function(closest, child) {
+            var box = child.getBoundingClientRect();
+            var offset = x - box.left - box.width / 2;
+
+            if (offset < 0 && offset > closest.offset) {
+                return { offset: offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    function onPointerDown(ev) {
+        if (ev.target.classList.contains('port-label') || ev.target.closest('.port-label')) {
+            return;
+        }
+
+        isTouch = (ev.type === 'touchstart');
+        
+        if (!isTouch && ev.button !== undefined && ev.button !== 0) {
+            return;
+        }
+
+        var clientX = ev.clientX;
+        var clientY = ev.clientY;
+        
+        if (isTouch && ev.touches && ev.touches.length > 0) {
+            clientX = ev.touches[0].clientX;
+            clientY = ev.touches[0].clientY;
+        }
+        
+        clickStart = { x: clientX, y: clientY };
+        hasMoved = false;
+
+        // Timer for Touch (400ms), mouse (200ms)
+        var delay = isTouch ? 400 : 200;
+        
+        clickTimer = setTimeout(function() {
+            if (!hasMoved) {
+                startDrag(ev);
+            }
+        }, delay);
+
+        if (isTouch) {
+            ev.preventDefault();
+        }
+    }
+
+    function onPointerUp(ev) {
+        if (clickTimer) {
+            clearTimeout(clickTimer);
+            clickTimer = null;
+        }
+        hasMoved = false;
+        clickStart = null;
+    }
+
+    function onPointerMove(ev) {
+        if (clickTimer && clickStart) {
+            var clientX = ev.clientX;
+            var clientY = ev.clientY;
+            
+            if (isTouch && ev.touches && ev.touches.length > 0) {
+                clientX = ev.touches[0].clientX;
+                clientY = ev.touches[0].clientY;
+            }
+            
+            var distance = Math.sqrt(
+                Math.pow(clientX - clickStart.x, 2) + 
+                Math.pow(clientY - clickStart.y, 2)
+            );
+            
+            if (distance > 5) {
+                hasMoved = true;
+                clearTimeout(clickTimer);
+                clickTimer = null;
+            }
+        }
+    }
+
+    element.addEventListener('mousedown', onPointerDown);
+    element.addEventListener('touchstart', onPointerDown, { passive: false });
+    document.addEventListener('mouseup', onPointerUp);
+    document.addEventListener('touchend', onPointerUp);
+    document.addEventListener('mousemove', onPointerMove);
+    document.addEventListener('touchmove', onPointerMove, { passive: false });
+}
+
+return baseclass.extend({
+	title: _('Port status'),
+
+	load: function() {
+		return Promise.all([
+			L.resolveDefault(callGetBuiltinEthernetPorts(), []),
+			L.resolveDefault(fs.read('/etc/board.json'), '{}'),
+			firewall.getZones(),
+			network.getNetworks(),
+			uci.load('network'),
+			loadUserPorts()
+		]);
+	},
+
+	render: function(data) {
+		if (L.hasSystemFeature('swconfig'))
+			return null;
+
+		var board = JSON.parse(data[1]),
+		    detected_ports = [],
+		    port_map = buildInterfaceMapping(data[2], data[3]),
+		    userConfig = data[5];
+
+		if (Array.isArray(data[0]) && data[0].length > 0) {
+			detected_ports = data[0].map(function(port) {
+				return {
+					device: port.device,
+					role: port.role,
+					netdev: network.instantiateDevice(port.device),
+					originalLabel: port.label || port.device
+				};
+			});
+		}
+		else {
+			if (L.isObject(board) && L.isObject(board.network)) {
+				for (var k = 'lan'; k != null; k = (k == 'lan') ? 'wan' : null) {
+					if (!L.isObject(board.network[k]))
+						continue;
+
+					if (Array.isArray(board.network[k].ports))
+						for (var i = 0; i < board.network[k].ports.length; i++)
+							detected_ports.push({
+								role: k,
+								device: board.network[k].ports[i],
+								netdev: network.instantiateDevice(board.network[k].ports[i]),
+								originalLabel: board.network[k].ports[i]
+							});
+					else if (typeof(board.network[k].device) == 'string')
+						detected_ports.push({
+							role: k,
+							device: board.network[k].device,
+							netdev: network.instantiateDevice(board.network[k].device),
+							originalLabel: board.network[k].device
+						});
+				}
+			}
+		}
+
+		detected_ports.sort(function(a, b) {
+			return L.naturalCompare(a.device, b.device);
+		});
+
+		/* Save config */
+		if (!userConfig) {
+			var initialConfig = detected_ports.map(function(p) {
+				return {
+					device: p.device,
+					label: p.device,
+					role: p.role,
+					originalLabel: p.originalLabel || p.device,
+					description: ''
+				};
+			});
+			
+			console.log('Creating initial port configuration...');
+			saveUserPorts(initialConfig).then(function() {
+				console.log('Initial configuration created successfully');
+			}).catch(function(err) {
+				console.error('Failed to create initial configuration:', err);
+				ui.addNotification(null, E('p', {}, [
+					_('Warning: Could not create port configuration file.'),
+					E('br'),
+					_('Port customizations will not be saved.'),
+					E('br'),
+					E('small', {}, _('Check /etc directory permissions'))
+				]), 'warning');
+			});
+			
+			userConfig = initialConfig;
+		}
+
+		var known_ports = mergePortConfigs(detected_ports, userConfig);
+		originalPorts = known_ports.slice();
+
+		var container = E('div', { 
+			'class': 'ports-container',
+			'style': 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em' 
+		});
+
+known_ports.forEach(function(port) {
+	var speed = port.netdev.getSpeed(),
+	    duplex = port.netdev.getDuplex(),
+	    carrier = port.netdev.getCarrier(),
+	    pmap = port_map[port.netdev.getName()],
+	    pzones = (pmap && pmap.zones.length) ? pmap.zones.sort(function(a, b) { return L.naturalCompare(a.getName(), b.getName()) }) : [ null ];
+
+	var labelDiv = E('div', { 
+		'class': 'ifacebox-head port-label', 
+		'style': 'font-weight:bold; position: relative; z-index: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0.25em 0.5em;' 
+	}, [ port.label || port.device ]);
+
+	var descriptionDiv = E('div', { 
+		'class': 'ifacebox-body port-description', 
+		'style': 'font-size:70%; color: var(--text-color-secondary); padding: 0.2em 0.5em; min-height: 1.2em; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; cursor: help; display: ' + (port.description ? 'block' : 'none'),
+		'title': port.description || ''
+	}, [ port.description || '' ]);
+
+	var portBox = E('div', { 
+		'class': 'ifacebox', 
+		'style': 'margin:.25em;min-width:70px;max-width:100px; user-select: none;' 
+	}, [
+		labelDiv,
+		descriptionDiv,
+		E('div', { 
+			'class': 'ifacebox-body',
+			'style': 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+		}, [
+			E('img', { 'src': L.resource('icons/port_%s.svg').format(carrier ? 'up' : 'down') }),
+			E('br'),
+			E('span', {
+				'style': 'display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;',
+				'title': carrier ? 
+					(speed > 0 && duplex ? _('Speed: %d Mibit/s, Duplex: %s').format(speed, duplex) : _('Connected')) : 
+					_('no link')
+			}, [
+				formatSpeed(carrier, speed, duplex)
+			])
+		]),
+		E('div', { 'class': 'ifacebox-head cbi-tooltip-container', 'style': 'display:flex' }, [
+			E([], pzones.map(function(zone) {
+				return E('div', {
+					'class': 'zonebadge',
+					'style': 'cursor:help;flex:1;height:3px;opacity:' + (carrier ? 1 : 0.25) + ';' + firewall.getZoneColorStyle(zone)
+				});
+			})),
+			E('span', { 'class': 'cbi-tooltip left' }, [ renderNetworksTooltip(pmap) ])
+		]),
+		E('div', { 'class': 'ifacebox-body' }, [
+			E('div', { 'class': 'cbi-tooltip-container', 'style': 'text-align:left;font-size:80%' }, [
+				'\u25b2\u202f%1024.1mB'.format(port.netdev.getTXBytes()),
+				E('br'),
+				'\u25bc\u202f%1024.1mB'.format(port.netdev.getRXBytes()),
+				E('span', { 'class': 'cbi-tooltip' }, formatStats(port.netdev))
+			]),
+		])
+	]);
+
+	portBox.__port__ = port;
+	makeEditable(labelDiv, descriptionDiv, port, known_ports);
+	makeDraggable(portBox, port, container, known_ports);
+	
+	container.appendChild(portBox);
+});
+		return container;
+	}
+});
