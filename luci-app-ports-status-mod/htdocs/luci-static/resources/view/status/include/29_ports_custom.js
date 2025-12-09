@@ -23,6 +23,8 @@ var callWritePortConfig = rpc.declare({
 });
 
 var USER_PORTS_FILE = '/etc/user_defined_ports.json';
+var USER_PORTS_BACKUP = '/etc/user_defined_ports.json.bak';
+var CONFIG_LOCK = false;
 var isDragging = false;
 var draggedElement = null;
 var originalPorts = [];
@@ -317,21 +319,82 @@ function renderNetworksTooltip(pmap) {
 	return E([], res);
 }
 
+function validatePortsConfig(config) {
+	if (!config) {
+		console.error('Config is null or undefined');
+		return false;
+	}
+	
+	if (!Array.isArray(config)) {
+		console.error('Config is not an array');
+		return false;
+	}
+	
+	if (config.length === 0) {
+		console.error('Config is empty array');
+		return false;
+	}
+	
+	for (var i = 0; i < config.length; i++) {
+		if (!config[i].device || typeof config[i].device !== 'string') {
+			console.error('Invalid device field at index', i);
+			return false;
+		}
+	}
+	
+	console.log('Config validation passed:', config.length, 'ports');
+	return true;
+}
+
 function loadUserPorts() {
 	return L.resolveDefault(fs.read(USER_PORTS_FILE), null).then(function(content) {
-		if (!content) {
-			console.log('User ports file not found, will be created on first save');
-			return null;
+		var isEmptyOrInvalid = false;
+		var parsed = null;
+		if (!content || content.trim() === '' || content.trim() === '[]') {
+			console.log('User ports file is empty or contains only []');
+			isEmptyOrInvalid = true;
+		} else {
+			try {
+				parsed = JSON.parse(content);
+				if (Array.isArray(parsed) && parsed.length === 0) {
+					console.log('User ports file contains empty array');
+					isEmptyOrInvalid = true;
+				} else if (!validatePortsConfig(parsed)) {
+					console.error('Invalid ports configuration detected');
+					isEmptyOrInvalid = true;
+				}
+			} catch(e) {
+				console.error('Failed to parse user ports config:', e);
+				isEmptyOrInvalid = true;
+			}
 		}
-		
-		try {
-			var parsed = JSON.parse(content);
-			console.log('Successfully loaded user ports config');
-			return parsed;
-		} catch(e) {
-			console.error('Failed to parse user ports config:', e);
-			return null;
+		if (isEmptyOrInvalid) {
+			console.log('Attempting automatic restore from backup...');
+			return L.resolveDefault(fs.read(USER_PORTS_BACKUP), null).then(function(backupContent) {
+				if (backupContent) {
+					try {
+						var backupParsed = JSON.parse(backupContent);
+						if (validatePortsConfig(backupParsed)) {
+							return fs.write(USER_PORTS_FILE, backupContent).then(function() {
+								console.log('Successfully restored from backup');
+								popTimeout(null, E('p', _('Port settings restored from backup')), 5000, 'info');
+								return backupParsed;
+							}).catch(function(err) {
+								console.error('Failed to write restored backup:', err);
+								popTimeout(null, E('p', _('Port settings restored from backup (write error)')), 3000, 'warning');
+								return backupParsed;
+							});
+						}
+					} catch(e) {
+						console.error('Backup file parsing failed:', e);
+					}
+				}
+				console.log('No valid backup found');
+				return null;
+			});
 		}
+		console.log('Successfully loaded user ports config');
+		return parsed;
 	}).catch(function(err) {
 		console.log('User ports file does not exist yet:', err);
 		return null;
@@ -339,6 +402,20 @@ function loadUserPorts() {
 }
 
 function saveUserPorts(ports) {
+	if (CONFIG_LOCK) {
+		console.warn('Save operation already in progress, skipping...');
+		return Promise.reject(new Error('Save operation locked'));
+	}
+	
+	CONFIG_LOCK = true;
+	
+	if (!ports || !Array.isArray(ports) || ports.length === 0) {
+		CONFIG_LOCK = false;
+		console.error('Refusing to save empty or invalid configuration');
+		ui.addNotification(null, E('p', _('Cannot save empty configuration')), 'error');
+		return Promise.reject(new Error('Invalid configuration'));
+	}
+	
 	var config = ports.map(function(port) {
 		return {
 			device: port.device,
@@ -351,58 +428,85 @@ function saveUserPorts(ports) {
 	
 	var jsonContent = JSON.stringify(config, null, 2);
 	
-	// fs.write
-	return fs.write(USER_PORTS_FILE, jsonContent).then(function() {
-		console.log('Port configuration saved successfully to', USER_PORTS_FILE);
-		return true;
-	}).catch(function(err) {
-		console.warn('fs.write failed, trying exec method:', err);
-		
-		// fs.exec
-		return fs.exec('/bin/sh', ['-c', 'echo \'' + jsonContent.replace(/'/g, "'\\''") + '\' > ' + USER_PORTS_FILE]).then(function(res) {
-			if (res.code === 0) {
-				console.log('Port configuration saved via exec');
-				return true;
-			} else {
-				throw new Error('exec write failed with code ' + res.code);
+	return L.resolveDefault(fs.read(USER_PORTS_FILE), null).then(function(currentContent) {
+		if (currentContent) {
+			try {
+				var currentConfig = JSON.parse(currentContent);
+				if (validatePortsConfig(currentConfig)) {
+					return fs.write(USER_PORTS_BACKUP, currentContent).catch(function(err) {
+						console.warn('Could not create backup:', err);
+						return Promise.resolve();
+					});
+				}
+			} catch(e) {
+				console.warn('Current config corrupted, will overwrite');
 			}
-		}).catch(function(err2) {
-			console.error('Both write methods failed:', err2);
+		}
+		return Promise.resolve();
+	}).then(function() {
+		return fs.write(USER_PORTS_FILE, jsonContent).then(function() {
+			console.log('Port configuration saved successfully to', USER_PORTS_FILE);
+			CONFIG_LOCK = false;
+			return true;
+		}).catch(function(err) {
+			console.warn('fs.write failed, trying exec method:', err);
 			
-			// folder permissions
-			return fs.stat('/etc').then(function(stat) {
-				var errorMsg = _('Cannot save port configuration. ') + 
-				               _('Directory /etc may be read-only or insufficient permissions. ') + 
-				               _('Try running: chmod 755 /etc && touch %s && chmod 644 %s').format(USER_PORTS_FILE, USER_PORTS_FILE);
+			var escapedContent = jsonContent.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/"/g, '\\"');
+			
+			return fs.exec('/bin/sh', ['-c', 'echo \'' + escapedContent + '\' > ' + USER_PORTS_FILE]).then(function(res) {
+				if (res.code === 0) {
+					console.log('Port configuration saved via exec');
+					CONFIG_LOCK = false;
+					return true;
+				} else {
+					throw new Error('exec write failed with code ' + res.code);
+				}
+			}).catch(function(err2) {
+				console.error('Both write methods failed:', err2);
+				CONFIG_LOCK = false;
 				
-				ui.addNotification(null, E('p', {}, [
-					E('strong', {}, _('Save Error')),
-					E('br'),
-					errorMsg,
-					E('br'),
-					E('small', {}, _('Original error: %s').format(err.message))
-				]), 'error');
-				
-				throw new Error(errorMsg);
+				return fs.stat('/etc').then(function(stat) {
+					var errorMsg = _('Cannot save port configuration. ') + 
+					               _('Directory /etc may be read-only or insufficient permissions. ') + 
+					               _('Try running: chmod 755 /etc && touch %s && chmod 644 %s').format(USER_PORTS_FILE, USER_PORTS_FILE);
+					
+					ui.addNotification(null, E('p', {}, [
+						E('strong', {}, _('Save Error')),
+						E('br'),
+						errorMsg,
+						E('br'),
+						E('small', {}, _('Original error: %s').format(err.message))
+					]), 'error');
+					
+					throw new Error(errorMsg);
+				});
 			});
 		});
+	}).catch(function(err) {
+		CONFIG_LOCK = false;
+		throw err;
 	});
 }
 
 function mergePortConfigs(detectedPorts, userConfig) {
-	if (!userConfig || !Array.isArray(userConfig))
+	if (!userConfig || !Array.isArray(userConfig) || userConfig.length === 0) {
+		console.log('No valid user config, using detected ports');
 		return detectedPorts;
+	}
 	
 	var userMap = {};
 	userConfig.forEach(function(p) {
-		userMap[p.device] = p;
+		if (p && p.device) {
+			userMap[p.device] = p;
+		}
 	});
 	
 	var merged = [];
 	var addedDevices = {};
 	
-	/* Ports from user config */
 	userConfig.forEach(function(userPort) {
+		if (!userPort || !userPort.device) return;
+		
 		var detected = detectedPorts.find(function(p) { return p.device === userPort.device; });
 		if (detected) {
 			merged.push({
@@ -430,6 +534,7 @@ function mergePortConfigs(detectedPorts, userConfig) {
 		}
 	});
 	
+	console.log('Merged config: detected=' + detectedPorts.length + ', user=' + userConfig.length + ', result=' + merged.length);
 	return merged;
 }
 
@@ -527,8 +632,16 @@ function showEditLabelModal(port, labelElement, descriptionElement, ports) {
 							throw new Error(_('Invalid configuration format'));
 						}
 						
+						if (!validatePortsConfig(config)) {
+							throw new Error(_('Configuration validation failed'));
+						}
+						
 						ui.showModal(_('Restore configuration'), [
 							E('p', _('This will overwrite current ports configuration. Continue?')),
+							E('p', {}, [
+								E('strong', {}, _('File contains:')),
+								' ', config.length, ' ', _('ports')
+							]),
 							E('div', { 'class': 'right' }, [
 								E('button', {
 									'class': 'cbi-button cbi-button-neutral',
@@ -569,20 +682,78 @@ function showEditLabelModal(port, labelElement, descriptionElement, ports) {
 		document.body.removeChild(fileInput);
 	};
 	
+	var handleRestoreBackup = function() {
+		L.resolveDefault(fs.read(USER_PORTS_BACKUP), null).then(function(backupContent) {
+			if (!backupContent) {
+				ui.addNotification(null, E('p', _('No backup file found')), 'warning');
+				return;
+			}
+			
+			try {
+				var backupConfig = JSON.parse(backupContent);
+				if (!validatePortsConfig(backupConfig)) {
+					throw new Error('Invalid backup configuration');
+				}
+				
+				ui.showModal(_('Restore from backup'), [
+					E('p', _('Restore configuration from backup file? This will overwrite current settings.')),
+					E('p', {}, [
+						E('strong', {}, _('Backup contains:')),
+						' ', backupConfig.length, ' ', _('ports')
+					]),
+					E('div', { 'class': 'right' }, [
+						E('button', {
+							'class': 'cbi-button cbi-button-neutral',
+							'click': function() {
+								ui.hideModal();
+								poll.start();
+							}
+						}, _('Cancel')),
+						' ',
+						E('button', {
+							'class': 'cbi-button cbi-button-neutral',
+							'click': function() {
+								fs.write(USER_PORTS_FILE, backupContent).then(function() {
+									ui.hideModal();
+									popTimeout(null, E('p', _('Configuration restored from backup. Reloading...')), 3000, 'info');
+									setTimeout(function() {
+										window.location.reload();
+									}, 1500);
+								}).catch(function(err) {
+									ui.hideModal();
+									ui.addNotification(null, E('p', _('Restore failed: %s').format(err.message)), 'error');
+									poll.start();
+								});
+							}
+						}, _('Restore'))
+					])
+				]);
+			} catch(e) {
+				ui.addNotification(null, E('p', _('Backup file is corrupted: %s').format(e.message)), 'error');
+			}
+		}).catch(function(err) {
+			ui.addNotification(null, E('p', _('Error reading backup: %s').format(err.message)), 'error');
+		});
+	};
+	
 	var backupComboButton = new ui.ComboButton('_save', {
 		'_save': _('Save .json file'),
-		'_upload': _('Upload .json file')
+		'_upload': _('Upload .json file'),
+		'_restore_backup': _('Restore backup .bak')
 	}, {
 		'click': function(ev, name) {
 			if (name === '_save') {
 				handleDownloadConfig();
 			} else if (name === '_upload') {
 				handleUploadConfig(ev);
+			} else if (name === '_restore_backup') {
+				handleRestoreBackup();
 			}
 		},
 		'classes': {
 			'_save': 'cbi-button cbi-button-neutral',
-			'_upload': 'cbi-button cbi-button-neutral'
+			'_upload': 'cbi-button cbi-button-neutral',
+			'_restore_backup': 'cbi-button cbi-button-action'
 		}
 	}).render();
 	
@@ -825,7 +996,6 @@ function makeDraggable(element, port, container, ports) {
         clickStart = { x: clientX, y: clientY };
         hasMoved = false;
 
-        // Timer for Touch (400ms), mouse (200ms)
         var delay = isTouch ? 400 : 200;
         
         clickTimer = setTimeout(function() {
@@ -941,8 +1111,7 @@ return baseclass.extend({
 			return L.naturalCompare(a.device, b.device);
 		});
 
-		/* Save config */
-		if (!userConfig) {
+		if (!userConfig || !validatePortsConfig(userConfig)) {
 			var initialConfig = detected_ports.map(function(p) {
 				return {
 					device: p.device,
@@ -953,21 +1122,25 @@ return baseclass.extend({
 				};
 			});
 			
-			console.log('Creating initial port configuration...');
-			saveUserPorts(initialConfig).then(function() {
-				console.log('Initial configuration created successfully');
-			}).catch(function(err) {
-				console.error('Failed to create initial configuration:', err);
-				ui.addNotification(null, E('p', {}, [
-					_('Warning: Could not create port configuration file.'),
-					E('br'),
-					_('Port customizations will not be saved.'),
-					E('br'),
-					E('small', {}, _('Check /etc directory permissions'))
-				]), 'warning');
-			});
-			
-			userConfig = initialConfig;
+			if (initialConfig.length > 0) {
+				console.log('Creating initial port configuration with', initialConfig.length, 'ports');
+				saveUserPorts(initialConfig).then(function() {
+					console.log('Initial configuration created successfully');
+				}).catch(function(err) {
+					console.error('Failed to create initial configuration:', err);
+					ui.addNotification(null, E('p', {}, [
+						_('Warning: Could not create port configuration file.'),
+						E('br'),
+						_('Port customizations will not be saved.'),
+						E('br'),
+						E('small', {}, _('Check /etc directory permissions'))
+					]), 'warning');
+				});
+				
+				userConfig = initialConfig;
+			}
+		} else {
+			console.log('Using existing configuration with', userConfig.length, 'ports');
 		}
 
 		var known_ports = mergePortConfigs(detected_ports, userConfig);
@@ -978,70 +1151,71 @@ return baseclass.extend({
 			'style': 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em' 
 		});
 
-known_ports.forEach(function(port) {
-	var speed = port.netdev.getSpeed(),
-	    duplex = port.netdev.getDuplex(),
-	    carrier = port.netdev.getCarrier(),
-	    pmap = port_map[port.netdev.getName()],
-	    pzones = (pmap && pmap.zones.length) ? pmap.zones.sort(function(a, b) { return L.naturalCompare(a.getName(), b.getName()) }) : [ null ];
+		known_ports.forEach(function(port) {
+			var speed = port.netdev.getSpeed(),
+			    duplex = port.netdev.getDuplex(),
+			    carrier = port.netdev.getCarrier(),
+			    pmap = port_map[port.netdev.getName()],
+			    pzones = (pmap && pmap.zones.length) ? pmap.zones.sort(function(a, b) { return L.naturalCompare(a.getName(), b.getName()) }) : [ null ];
 
-	var labelDiv = E('div', { 
-		'class': 'ifacebox-head port-label', 
-		'style': 'font-weight:bold; position: relative; z-index: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0.25em 0.5em;' 
-	}, [ port.label || port.device ]);
+			var labelDiv = E('div', { 
+				'class': 'ifacebox-head port-label', 
+				'style': 'font-weight:bold; position: relative; z-index: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0.25em 0.5em;' 
+			}, [ port.label || port.device ]);
 
-	var descriptionDiv = E('div', { 
-		'class': 'ifacebox-body port-description', 
-		'style': 'font-size:70%; color: var(--text-color-secondary); padding: 0.2em 0.5em; min-height: 1.2em; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; cursor: help; display: ' + (port.description ? 'block' : 'none'),
-		'title': port.description || ''
-	}, [ port.description || '' ]);
+			var descriptionDiv = E('div', { 
+				'class': 'ifacebox-body port-description', 
+				'style': 'font-size:70%; color: var(--text-color-secondary); padding: 0.2em 0.5em; min-height: 1.2em; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; cursor: help; display: ' + (port.description ? 'block' : 'none'),
+				'title': port.description || ''
+			}, [ port.description || '' ]);
 
-	var portBox = E('div', { 
-		'class': 'ifacebox', 
-		'style': 'margin:.25em;min-width:70px;max-width:100px; user-select: none;' 
-	}, [
-		labelDiv,
-		descriptionDiv,
-		E('div', { 
-			'class': 'ifacebox-body',
-			'style': 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
-		}, [
-			E('img', { 'src': L.resource('icons/port_%s.svg').format(carrier ? 'up' : 'down') }),
-			E('br'),
-			E('span', {
-				'style': 'display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;',
-				'title': carrier ? 
-					(speed > 0 && duplex ? _('Speed: %d Mibit/s, Duplex: %s').format(speed, duplex) : _('Connected')) : 
-					_('no link')
+			var portBox = E('div', { 
+				'class': 'ifacebox', 
+				'style': 'margin:.25em;min-width:70px;max-width:100px; user-select: none;' 
 			}, [
-				formatSpeed(carrier, speed, duplex)
-			])
-		]),
-		E('div', { 'class': 'ifacebox-head cbi-tooltip-container', 'style': 'display:flex' }, [
-			E([], pzones.map(function(zone) {
-				return E('div', {
-					'class': 'zonebadge',
-					'style': 'cursor:help;flex:1;height:3px;opacity:' + (carrier ? 1 : 0.25) + ';' + firewall.getZoneColorStyle(zone)
-				});
-			})),
-			E('span', { 'class': 'cbi-tooltip left' }, [ renderNetworksTooltip(pmap) ])
-		]),
-		E('div', { 'class': 'ifacebox-body' }, [
-			E('div', { 'class': 'cbi-tooltip-container', 'style': 'text-align:left;font-size:80%' }, [
-				'\u25b2\u202f%1024.1mB'.format(port.netdev.getTXBytes()),
-				E('br'),
-				'\u25bc\u202f%1024.1mB'.format(port.netdev.getRXBytes()),
-				E('span', { 'class': 'cbi-tooltip' }, formatStats(port.netdev))
-			]),
-		])
-	]);
+				labelDiv,
+				descriptionDiv,
+				E('div', { 
+					'class': 'ifacebox-body',
+					'style': 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+				}, [
+					E('img', { 'src': L.resource('icons/port_%s.svg').format(carrier ? 'up' : 'down') }),
+					E('br'),
+					E('span', {
+						'style': 'display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;',
+						'title': carrier ? 
+							(speed > 0 && duplex ? _('Speed: %d Mibit/s, Duplex: %s').format(speed, duplex) : _('Connected')) : 
+							_('no link')
+					}, [
+						formatSpeed(carrier, speed, duplex)
+					])
+				]),
+				E('div', { 'class': 'ifacebox-head cbi-tooltip-container', 'style': 'display:flex' }, [
+					E([], pzones.map(function(zone) {
+						return E('div', {
+							'class': 'zonebadge',
+							'style': 'cursor:help;flex:1;height:3px;opacity:' + (carrier ? 1 : 0.25) + ';' + firewall.getZoneColorStyle(zone)
+						});
+					})),
+					E('span', { 'class': 'cbi-tooltip left' }, [ renderNetworksTooltip(pmap) ])
+				]),
+				E('div', { 'class': 'ifacebox-body' }, [
+					E('div', { 'class': 'cbi-tooltip-container', 'style': 'text-align:left;font-size:80%' }, [
+						'\u25b2\u202f%1024.1mB'.format(port.netdev.getTXBytes()),
+						E('br'),
+						'\u25bc\u202f%1024.1mB'.format(port.netdev.getRXBytes()),
+						E('span', { 'class': 'cbi-tooltip' }, formatStats(port.netdev))
+					]),
+				])
+			]);
 
-	portBox.__port__ = port;
-	makeEditable(labelDiv, descriptionDiv, port, known_ports);
-	makeDraggable(portBox, port, container, known_ports);
-	
-	container.appendChild(portBox);
-});
+			portBox.__port__ = port;
+			makeEditable(labelDiv, descriptionDiv, port, known_ports);
+			makeDraggable(portBox, port, container, known_ports);
+			
+			container.appendChild(portBox);
+		});
+
 		return container;
 	}
 });

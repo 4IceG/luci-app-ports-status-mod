@@ -1,0 +1,122 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+msgid "Edit Port Label"
+msgstr "Изменить метку порта"
+
+msgid "Enter new label for this port:"
+msgstr "Введите новую метку для этого порта:"
+
+msgid "Device"
+msgstr "Устройство"
+
+msgid "Original label"
+msgstr "Исходная метка"
+
+msgid "Restore Original"
+msgstr "Восстановить исходную"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "Port configuration saved successfully"
+msgstr "Конфигурация порта успешно сохранена"
+
+msgid "Port order saved"
+msgstr "Порядок портов сохранён"
+
+msgid "Click to edit label"
+msgstr "Нажмите для изменения метки"
+
+msgid "Hold to drag and reorder"
+msgstr "Удерживайте для перетаскивания и изменения порядка"
+
+msgid "Label max 9 chars, description max 50 chars."
+msgstr "Метка макс. 9 символов, описание макс. 50 символов."
+
+msgid "Enter description (optional):"
+msgstr "Введите описание (необязательно):"
+
+msgid "Optional description"
+msgstr "Необязательное описание"
+
+msgid "User settings are saved to the /etc/user_defined_ports.json file."
+msgstr "Пользовательские настройки сохраняются в файле /etc/user_defined_ports.json."
+
+msgid "Configuration file downloaded"
+msgstr "Файл конфигурации загружен"
+
+msgid "Configuration file not found"
+msgstr "Файл конфигурации не найден"
+
+msgid "Download error: %s"
+msgstr "Ошибка загрузки: %s"
+
+msgid "Invalid configuration format"
+msgstr "Неверный формат конфигурации"
+
+msgid "Restore configuration"
+msgstr "Восстановить конфигурацию"
+
+msgid "This will overwrite current ports configuration. Continue?"
+msgstr "Это перезапишет текущую конфигурацию портов. Продолжить?"
+
+msgid "Configuration restored successfully. Reloading..."
+msgstr "Конфигурация успешно восстановлена. Перезагрузка..."
+
+msgid "File restore failed: %s"
+msgstr "Не удалось восстановить файл: %s"
+
+msgid "Save .json file"
+msgstr "Сохранить .json файл"
+
+msgid "Upload .json file"
+msgstr "Загрузить .json файл"
+
+msgid "Cannot save empty configuration"
+msgstr "Невозможно сохранить пустую конфигурацию"
+
+msgid "Cannot save port configuration. "
+msgstr "Невозможно сохранить конфигурацию портов. "
+
+msgid "Directory /etc may be read-only or insufficient permissions. "
+msgstr "Каталог /etc может быть доступен только для чтения или иметь недостаточные права доступа. "
+
+msgid "Try running: chmod 755 /etc && touch %s && chmod 644 %s"
+msgstr "Попробуйте выполнить: chmod 755 /etc && touch %s && chmod 644 %s"
+
+msgid "Save Error"
+msgstr "Ошибка сохранения"
+
+msgid "Original error: %s"
+msgstr "Исходная ошибка: %s"
+
+msgid "Restore from backup"
+msgstr "Восстановить из резервной копии"
+
+msgid "Restore configuration from backup file? This will overwrite current settings."
+msgstr "Восстановить конфигурацию из файла резервной копии? Это перезапишет текущие настройки."
+
+msgid "Backup contains:"
+msgstr "Резервная копия содержит:"
+
+msgid "Configuration restored from backup. Reloading..."
+msgstr "Конфигурация восстановлена из резервной копии. Перезагрузка..."
+
+msgid "Restore failed: %s"
+msgstr "Восстановление не удалось: %s"
+
+msgid "Backup file is corrupted: %s"
+msgstr "Файл резервной копии повреждён: %s"
+
+msgid "Error reading backup: %s"
+msgstr "Ошибка чтения резервной копии: %s"
+
+msgid "Restore backup .bak"
+msgstr "Восстановить резервную копию .bak"
+
+msgid ""
+msgstr ""

@@ -1,6 +1,9 @@
 #!/bin/sh
+# 
 # Copyright 2025 Rafał Wabik (IceG) - From eko.one.pl forum
+# 
 # MIT
+# 
 
 PORTS_ORIG="/www/luci-static/resources/view/status/include/29_ports.js"
 PORTS_BAK="/www/luci-static/resources/view/status/include/29_ports.bak"

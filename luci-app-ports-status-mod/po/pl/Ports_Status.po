@@ -75,3 +75,48 @@ msgstr "Zapisz plik .json"
 
 msgid "Upload .json file"
 msgstr "Załaduj plik .json"
+
+msgid "Cannot save empty configuration"
+msgstr "Nie można zapisać pustej konfiguracji"
+
+msgid "Cannot save port configuration. "
+msgstr "Nie można zapisać konfiguracji portów. "
+
+msgid "Directory /etc may be read-only or insufficient permissions. "
+msgstr "Katalog /etc może być tylko do odczytu lub mieć niewystarczające uprawnienia. "
+
+msgid "Try running: chmod 755 /etc && touch %s && chmod 644 %s"
+msgstr "Spróbuj uruchomić: chmod 755 /etc && touch %s && chmod 644 %s"
+
+msgid "Save Error"
+msgstr "Błąd zapisu"
+
+msgid "Original error: %s"
+msgstr "Oryginalny błąd: %s"
+
+msgid "Restore from backup"
+msgstr "Przywróć z kopii zapasowej"
+
+msgid "Restore configuration from backup file? This will overwrite current settings."
+msgstr "Przywrócić konfigurację z pliku kopii zapasowej? Spowoduje to nadpisanie bieżących ustawień."
+
+msgid "Backup contains:"
+msgstr "Kopia zapasowa zawiera:"
+
+msgid "Configuration restored from backup. Reloading..."
+msgstr "Konfiguracja przywrócona z kopii zapasowej. Odświeżanie..."
+
+msgid "Restore failed: %s"
+msgstr "Przywracanie nie powiodło się: %s"
+
+msgid "Backup file is corrupted: %s"
+msgstr "Plik kopii zapasowej jest uszkodzony: %s"
+
+msgid "Error reading backup: %s"
+msgstr "Błąd odczytu kopii zapasowej: %s"
+
+msgid "Restore backup .bak"
+msgstr "Przywróć kopię .bak"
+
+msgid ""
+msgstr ""
