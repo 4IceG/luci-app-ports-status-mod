@@ -1,6 +1,6 @@
 #!/bin/sh
 # 
-# Copyright 2025 Rafał Wabik (IceG) - From eko.one.pl forum
+# Copyright 2025-2026 Rafał Wabik (IceG) - From eko.one.pl forum
 # 
 # MIT
 # 
@@ -19,6 +19,10 @@ if [ -f "$PORTS_CUSTOM" ]; then
     mv "$PORTS_CUSTOM" "$PORTS_ORIG"
 fi
 
-rm -rf /tmp/luci-indexcache  2>&1 &
-rm -rf /tmp/luci-modulecache/  2>&1 &
+chmod +x /usr/libexec/rpcd/ports-status-mod >/dev/null 2>&1 &
+
+rm -rf /tmp/luci-indexcache >/dev/null 2>&1 &
+rm -rf /tmp/luci-* >/dev/null 2>&1 &
+rm -rf /tmp/luci-modulecache/ >/dev/null 2>&1 &
+
 exit 0

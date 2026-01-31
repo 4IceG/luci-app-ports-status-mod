@@ -2,16 +2,16 @@ msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8"
 
 msgid "Edit Port Label"
-msgstr "Port-Bezeichnung bearbeiten"
+msgstr "Port-Beschriftung bearbeiten"
 
 msgid "Enter new label for this port:"
-msgstr "Neue Bezeichnung für diesen Port eingeben:"
+msgstr "Neue Beschriftung für diesen Port eingeben:"
 
 msgid "Device"
 msgstr "Gerät"
 
 msgid "Original label"
-msgstr "Ursprüngliche Bezeichnung"
+msgstr "Originalbeschriftung"
 
 msgid "Restore Original"
 msgstr "Original wiederherstellen"
@@ -29,13 +29,13 @@ msgid "Port order saved"
 msgstr "Port-Reihenfolge gespeichert"
 
 msgid "Click to edit label"
-msgstr "Klicken zum Bearbeiten der Bezeichnung"
+msgstr "Klicken Sie, um die Beschriftung zu bearbeiten"
 
 msgid "Hold to drag and reorder"
-msgstr "Halten zum Ziehen und Neuordnen"
+msgstr "Halten Sie gedrückt, um zu ziehen und neu anzuordnen"
 
 msgid "Label max 9 chars, description max 50 chars."
-msgstr "Bezeichnung max. 9 Zeichen, Beschreibung max. 50 Zeichen."
+msgstr "Beschriftung max. 9 Zeichen, Beschreibung max. 50 Zeichen."
 
 msgid "Enter description (optional):"
 msgstr "Beschreibung eingeben (optional):"
@@ -65,7 +65,7 @@ msgid "This will overwrite current ports configuration. Continue?"
 msgstr "Dies überschreibt die aktuelle Port-Konfiguration. Fortfahren?"
 
 msgid "Configuration restored successfully. Reloading..."
-msgstr "Konfiguration erfolgreich wiederhergestellt. Neu laden..."
+msgstr "Konfiguration erfolgreich wiederhergestellt. Wird neu geladen..."
 
 msgid "File restore failed: %s"
 msgstr "Dateiwiederherstellung fehlgeschlagen: %s"
@@ -86,7 +86,7 @@ msgid "Directory /etc may be read-only or insufficient permissions. "
 msgstr "Verzeichnis /etc ist möglicherweise schreibgeschützt oder hat unzureichende Berechtigungen. "
 
 msgid "Try running: chmod 755 /etc && touch %s && chmod 644 %s"
-msgstr "Versuchen Sie: chmod 755 /etc && touch %s && chmod 644 %s"
+msgstr "Versuchen Sie auszuführen: chmod 755 /etc && touch %s && chmod 644 %s"
 
 msgid "Save Error"
 msgstr "Speicherfehler"
@@ -104,7 +104,7 @@ msgid "Backup contains:"
 msgstr "Sicherung enthält:"
 
 msgid "Configuration restored from backup. Reloading..."
-msgstr "Konfiguration aus Sicherung wiederhergestellt. Neu laden..."
+msgstr "Konfiguration aus Sicherung wiederhergestellt. Wird neu geladen..."
 
 msgid "Restore failed: %s"
 msgstr "Wiederherstellung fehlgeschlagen: %s"
@@ -118,5 +118,32 @@ msgstr "Fehler beim Lesen der Sicherung: %s"
 msgid "Restore backup .bak"
 msgstr "Sicherung .bak wiederherstellen"
 
-msgid ""
-msgstr ""
+msgid "Change port state"
+msgstr "Portstatus ändern"
+
+msgid "Enable this port"
+msgstr "Diesen Port aktivieren"
+
+msgid "Enable port"
+msgstr "Port aktivieren"
+
+msgid "Disable this port"
+msgstr "Diesen Port deaktivieren"
+
+msgid "Disable port"
+msgstr "Port deaktivieren"
+
+msgid "Down"
+msgstr "inaktiv"
+
+msgid "Disabled"
+msgstr "deaktiviert"
+
+msgid "Idle"
+msgstr "leerlauf"
+
+msgid "Active"
+msgstr "aktiv"
+
+msgid "Unknown"
+msgstr "unbekannt"

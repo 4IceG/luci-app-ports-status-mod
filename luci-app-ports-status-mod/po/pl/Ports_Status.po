@@ -118,5 +118,32 @@ msgstr "Błąd odczytu kopii zapasowej: %s"
 msgid "Restore backup .bak"
 msgstr "Przywróć kopię .bak"
 
-msgid ""
-msgstr ""
+msgid "Change port state"
+msgstr "Zmień stan portu"
+
+msgid "Enable this port"
+msgstr "Włącz ten port"
+
+msgid "Enable port"
+msgstr "Włącz port"
+
+msgid "Disable this port"
+msgstr "Wyłącz ten port"
+
+msgid "Disable port"
+msgstr "Wyłącz port"
+
+msgid "Down"
+msgstr "nieaktywny"
+
+msgid "Disabled"
+msgstr "wyłączony"
+
+msgid "Idle"
+msgstr "bezczynny"
+
+msgid "Active"
+msgstr "aktywny"
+
+msgid "Unknown"
+msgstr "nieznany"

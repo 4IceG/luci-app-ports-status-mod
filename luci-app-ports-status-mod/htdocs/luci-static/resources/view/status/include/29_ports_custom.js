@@ -9,6 +9,12 @@
 'require dom';
 'require poll';
 
+(function() {
+	var style = document.createElement('style');
+	style.textContent = '@keyframes status-blink { 0%, 60%, 100% { opacity: 1; } 30% { opacity: 0.2; } }';
+	document.head.appendChild(style);
+})();
+
 var callGetBuiltinEthernetPorts = rpc.declare({
 	object: 'luci',
 	method: 'getBuiltinEthernetPorts',
@@ -19,6 +25,19 @@ var callWritePortConfig = rpc.declare({
 	object: 'file',
 	method: 'write',
 	params: ['path', 'data'],
+	expect: { }
+});
+
+var callGetPortsStatus = rpc.declare({
+	object: 'ports-status-mod',
+	method: 'getPortsStatus',
+	expect: { }
+});
+
+var callSetPortStatus = rpc.declare({
+	object: 'ports-status-mod',
+	method: 'setPortStatus',
+	params: ['port', 'status'],
 	expect: { }
 });
 
@@ -232,7 +251,7 @@ function buildInterfaceMapping(zones, networks) {
 function formatSpeed(carrier, speed, duplex) {
 	if ((speed > 0) && duplex) {
 		var d = (duplex == 'half') ? '\u202f(H)' : '',
-		    e = E('span', { 'title': _('Speed: %d Mibit/s, Duplex: %s').format(speed, duplex) });
+		    e = E('span', { 'title': _('Speed: %d Mbit/s, Duplex: %s').format(speed, duplex) });
 
 		switch (true) {
 		case (speed < 1000):
@@ -538,13 +557,61 @@ function mergePortConfigs(detectedPorts, userConfig) {
 	return merged;
 }
 
-function showEditLabelModal(port, labelElement, descriptionElement, ports) {
+function showEditLabelModal(port, labelElement, descriptionElement, statusElement, ports) {
 	poll.stop();
 	
 	var modalTitle = _('Edit Port Label');
 	var currentLabel = port.label || port.device;
 	var currentDescription = port.description || '';
 	var originalLabel = port.originalLabel || port.device;
+	
+	var statusRadioUp = E('input', {
+		'type': 'radio',
+		'name': 'port_status',
+		'value': 'up',
+		'id': 'port-status-up',
+		'disabled': true
+	});
+	
+	var statusRadioDown = E('input', {
+		'type': 'radio',
+		'name': 'port_status',
+		'value': 'down',
+		'id': 'port-status-down',
+		'disabled': true
+	});
+	
+	var isLanPort = false;
+	
+	L.resolveDefault(callGetPortsStatus(), {}).then(function(portsStatus) {
+		var deviceForStatus = port.device.split('@')[0];
+		var operstate = portsStatus[deviceForStatus];
+		
+		if (operstate !== undefined) {
+			isLanPort = true;
+			statusRadioUp.disabled = false;
+			statusRadioDown.disabled = false;
+			
+			var isCurrentlyEnabled = (operstate !== 'disabled');
+			
+			if (isCurrentlyEnabled) {
+				statusRadioUp.checked = true;
+			} else {
+				statusRadioDown.checked = true;
+			}
+			port._currentOperstate = operstate;
+		} else {
+			var msgElement = document.getElementById('port-status-message');
+			if (msgElement) {
+				msgElement.style.display = 'block';
+			}
+		}
+		
+		console.log('Modal opened for port:', port.device);
+		console.log('Device for status lookup:', deviceForStatus);
+		console.log('Operstate from rpcd:', operstate);
+		console.log('isLanPort (enabled):', isLanPort);
+	});
 	
 	var labelInputEl = E('input', {
 		'type': 'text',
@@ -576,13 +643,39 @@ function showEditLabelModal(port, labelElement, descriptionElement, ports) {
 		E('small', {}, _('User settings are saved to the /etc/user_defined_ports.json file.'))
 	]);
 	
+	var statusSection = [
+		E('p', { 'style': 'margin-top: 1em;' }, _('Change port state')),
+		E('div', { 'style': 'margin-bottom: 1em;' }, [
+			E('label', {
+				'data-tooltip': _('Enable this port')
+			}, [
+				statusRadioUp,
+				' ',
+				_('Enable port')
+			]),
+			' \u00a0 ',
+			E('label', {
+				'data-tooltip': _('Disable this port')
+			}, [
+				statusRadioDown,
+				' ',
+				_('Disable port')
+			])
+		]),
+		E('div', { 
+			'id': 'port-status-message',
+			'style': 'margin-top: 8px; padding: 8px; background: var(--background-color-medium); border: 1px solid var(--border-color-medium); border-radius: 4px; font-size: 12px; color: var(--text-color-secondary); display: none;' 
+		}, [
+			_('Changing port state is available only for LAN ports')
+		])
+	];
+	
 	var modalContent = E('div', {}, [
 		E('p', {}, _('Enter new label for this port:')),
 		labelInputEl,
 		E('p', { 'style': 'margin-top: 1em;' }, _('Enter description (optional):')),
-		descriptionInputEl,
-		infoText
-	]);
+		descriptionInputEl
+	].concat(statusSection).concat([infoText]));
 	
 	var restoreBtn = E('button', {
 		'class': 'cbi-button cbi-button-neutral',
@@ -796,9 +889,55 @@ function showEditLabelModal(port, labelElement, descriptionElement, ports) {
 							descriptionElement.style.display = 'none';
 						}
 						
+						var newStatusEnabled = document.getElementById('port-status-up').checked;
+						var currentOperstate = port._currentOperstate || 'unknown';
+						var isCurrentlyEnabled = (currentOperstate !== 'disabled');
+						var statusChanged = isLanPort && (newStatusEnabled !== isCurrentlyEnabled);
+						
 						ui.showModal(null, E('p', { 'class': 'spinning' }, _('Saving configuration...')));
 						
-						saveUserPorts(ports).then(function() {
+						var promises = [saveUserPorts(ports)];
+						
+						if (statusChanged) {
+							var newStatus = newStatusEnabled ? 'up' : 'down';
+							promises.push(
+								L.resolveDefault(callSetPortStatus(port.device, newStatus), {})
+									.then(function(res) {
+										if (res && res.success) {
+											var newOperstate = newStatusEnabled ? 'idle' : 'disabled';
+											var statusColor = '#888';
+											var statusText = _('Down');
+											var statusAnimate = '';
+											
+											if (newOperstate === 'disabled') {
+												statusColor = '#FF204E'; // Red
+												statusText = _('Disabled');
+											} else if (newOperstate === 'idle') {
+												statusColor = '#FFF455'; // Yellow
+												statusText = _('Idle');
+											}
+											
+											var statusDot = E('span', {
+												'style': 'display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background-color:' + statusColor + ';' + statusAnimate
+											});
+											
+											dom.content(statusElement, [ statusDot, statusText ]);
+											port._operstate = newOperstate;
+											port._currentOperstate = newOperstate;
+											
+											var msg = newStatusEnabled ? _('Port has been enabled successfully') : _('Port has been disabled successfully');
+											popTimeout(null, E('p', msg), 5000, 'info');
+										} else {
+											popTimeout(null, E('p', _('Failed to change port status')), 5000, 'error');
+										}
+									})
+									.catch(function(err) {
+										popTimeout(null, E('p', _('Error changing port status')), 5000, 'error');
+									})
+							);
+						}
+						
+						Promise.all(promises).then(function() {
 							ui.hideModal();
 							popTimeout(null, E('p', _('Port configuration saved successfully')), 5000, 'info');
 							poll.start();
@@ -835,7 +974,7 @@ function showEditLabelModal(port, labelElement, descriptionElement, ports) {
 	descriptionInputEl.addEventListener('keydown', handleKeydown);
 }
 
-function makeEditable(element, descriptionElement, port, ports) {
+function makeEditable(element, descriptionElement, statusElement, port, ports) {
 	element.style.cursor = 'pointer';
 	element.title = _('Click to edit label');
 	
@@ -846,7 +985,7 @@ function makeEditable(element, descriptionElement, port, ports) {
 		ev.stopPropagation();
 		ev.preventDefault();
 		
-		showEditLabelModal(port, element, descriptionElement, ports);
+		showEditLabelModal(port, element, descriptionElement, statusElement, ports);
 	});
 }
 
@@ -1059,7 +1198,8 @@ return baseclass.extend({
 			firewall.getZones(),
 			network.getNetworks(),
 			uci.load('network'),
-			loadUserPorts()
+			loadUserPorts(),
+			L.resolveDefault(callGetPortsStatus(), {})
 		]);
 	},
 
@@ -1070,7 +1210,8 @@ return baseclass.extend({
 		var board = JSON.parse(data[1]),
 		    detected_ports = [],
 		    port_map = buildInterfaceMapping(data[2], data[3]),
-		    userConfig = data[5];
+		    userConfig = data[5],
+		    portsStatus = data[6] || {};
 
 		if (Array.isArray(data[0]) && data[0].length > 0) {
 			detected_ports = data[0].map(function(port) {
@@ -1169,6 +1310,43 @@ return baseclass.extend({
 				'title': port.description || ''
 			}, [ port.description || '' ]);
 
+			var deviceForStatus = port.device.split('@')[0];
+			var operstate = portsStatus[deviceForStatus] || 'unknown';
+
+			var statusColor = '#ccc';
+			var statusText = _('Down');
+			var statusAnimate = '';
+			
+			if (operstate === 'disabled') {
+				statusColor = '#FF204E'; // Red
+				statusText = _('Disabled');
+			} else if (operstate === 'down') {
+				statusColor = '#ccc'; // Gray
+				statusText = _('Down');
+			} else if (operstate === 'idle') {
+				statusColor = '#FFA500'; // Orange - idle
+				statusText = _('Idle');
+			} else if (operstate === 'active') {
+				statusColor = '#39FF13'; // Light green - active
+				statusText = _('Active');
+				statusAnimate = 'animation: status-blink 0.8s infinite;';
+			} else {
+				statusColor = '#ccc';
+				statusText = _('Unknown');
+			}
+			
+			var statusDot = E('span', {
+				'style': 'display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background-color:' + statusColor + ';' + statusAnimate
+			});
+			
+			var statusElement = E('span', { 
+				'style': 'font-size: 85%; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+			}, [ statusDot, statusText ]);
+			
+			port._operstate = operstate;
+			port._currentOperstate = operstate;
+			port._isLanPort = true;
+
 			var portBox = E('div', { 
 				'class': 'ifacebox', 
 				'style': 'margin:.25em;min-width:70px;max-width:100px; user-select: none;' 
@@ -1199,6 +1377,12 @@ return baseclass.extend({
 					})),
 					E('span', { 'class': 'cbi-tooltip left' }, [ renderNetworksTooltip(pmap) ])
 				]),
+				E('div', { 
+					'class': 'ifacebox-body',
+					'style': 'padding: 0.15em 0.5em; text-align: center; border-top: 1px solid var(--border-color-medium); border-bottom: 1px solid var(--border-color-medium); background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+				}, [
+					statusElement
+				]),
 				E('div', { 'class': 'ifacebox-body' }, [
 					E('div', { 'class': 'cbi-tooltip-container', 'style': 'text-align:left;font-size:80%' }, [
 						'\u25b2\u202f%1024.1mB'.format(port.netdev.getTXBytes()),
@@ -1210,7 +1394,7 @@ return baseclass.extend({
 			]);
 
 			portBox.__port__ = port;
-			makeEditable(labelDiv, descriptionDiv, port, known_ports);
+			makeEditable(labelDiv, descriptionDiv, statusElement, port, known_ports);
 			makeDraggable(portBox, port, container, known_ports);
 			
 			container.appendChild(portBox);

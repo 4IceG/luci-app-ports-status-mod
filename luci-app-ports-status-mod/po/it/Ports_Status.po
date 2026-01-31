@@ -5,7 +5,7 @@ msgid "Edit Port Label"
 msgstr "Modifica etichetta porta"
 
 msgid "Enter new label for this port:"
-msgstr "Inserisci nuova etichetta per questa porta:"
+msgstr "Inserisci una nuova etichetta per questa porta:"
 
 msgid "Device"
 msgstr "Dispositivo"
@@ -23,13 +23,13 @@ msgid "Save"
 msgstr "Salva"
 
 msgid "Port configuration saved successfully"
-msgstr "Configurazione porta salvata con successo"
+msgstr "Configurazione della porta salvata con successo"
 
 msgid "Port order saved"
-msgstr "Ordine porta salvato"
+msgstr "Ordine delle porte salvato"
 
 msgid "Click to edit label"
-msgstr "Clicca per modificare l'etichetta"
+msgstr "Fai clic per modificare l'etichetta"
 
 msgid "Hold to drag and reorder"
 msgstr "Tieni premuto per trascinare e riordinare"
@@ -44,7 +44,7 @@ msgid "Optional description"
 msgstr "Descrizione facoltativa"
 
 msgid "User settings are saved to the /etc/user_defined_ports.json file."
-msgstr "Le impostazioni utente sono salvate nel file /etc/user_defined_ports.json."
+msgstr "Le impostazioni utente vengono salvate nel file /etc/user_defined_ports.json."
 
 msgid "Configuration file downloaded"
 msgstr "File di configurazione scaricato"
@@ -68,7 +68,7 @@ msgid "Configuration restored successfully. Reloading..."
 msgstr "Configurazione ripristinata con successo. Ricaricamento..."
 
 msgid "File restore failed: %s"
-msgstr "Ripristino file fallito: %s"
+msgstr "Ripristino del file non riuscito: %s"
 
 msgid "Save .json file"
 msgstr "Salva file .json"
@@ -77,16 +77,16 @@ msgid "Upload .json file"
 msgstr "Carica file .json"
 
 msgid "Cannot save empty configuration"
-msgstr "Impossibile salvare configurazione vuota"
+msgstr "Impossibile salvare una configurazione vuota"
 
 msgid "Cannot save port configuration. "
-msgstr "Impossibile salvare configurazione porta. "
+msgstr "Impossibile salvare la configurazione delle porte. "
 
 msgid "Directory /etc may be read-only or insufficient permissions. "
-msgstr "La directory /etc potrebbe essere in sola lettura o con permessi insufficienti. "
+msgstr "La directory /etc potrebbe essere in sola lettura o avere permessi insufficienti. "
 
 msgid "Try running: chmod 755 /etc && touch %s && chmod 644 %s"
-msgstr "Prova ad eseguire: chmod 755 /etc && touch %s && chmod 644 %s"
+msgstr "Prova a eseguire: chmod 755 /etc && touch %s && chmod 644 %s"
 
 msgid "Save Error"
 msgstr "Errore di salvataggio"
@@ -95,28 +95,55 @@ msgid "Original error: %s"
 msgstr "Errore originale: %s"
 
 msgid "Restore from backup"
-msgstr "Ripristina da backup"
+msgstr "Ripristina dal backup"
 
 msgid "Restore configuration from backup file? This will overwrite current settings."
-msgstr "Ripristinare la configurazione dal file di backup? Questo sovrascriverà le impostazioni attuali."
+msgstr "Ripristinare la configurazione dal file di backup? Questo sovrascriverà le impostazioni correnti."
 
 msgid "Backup contains:"
 msgstr "Il backup contiene:"
 
 msgid "Configuration restored from backup. Reloading..."
-msgstr "Configurazione ripristinata da backup. Ricaricamento..."
+msgstr "Configurazione ripristinata dal backup. Ricaricamento..."
 
 msgid "Restore failed: %s"
-msgstr "Ripristino fallito: %s"
+msgstr "Ripristino non riuscito: %s"
 
 msgid "Backup file is corrupted: %s"
 msgstr "Il file di backup è danneggiato: %s"
 
 msgid "Error reading backup: %s"
-msgstr "Errore nella lettura del backup: %s"
+msgstr "Errore durante la lettura del backup: %s"
 
 msgid "Restore backup .bak"
 msgstr "Ripristina backup .bak"
 
-msgid ""
-msgstr ""
+msgid "Change port state"
+msgstr "Cambia stato porta"
+
+msgid "Enable this port"
+msgstr "Abilita questa porta"
+
+msgid "Enable port"
+msgstr "Abilita porta"
+
+msgid "Disable this port"
+msgstr "Disabilita questa porta"
+
+msgid "Disable port"
+msgstr "Disabilita porta"
+
+msgid "Down"
+msgstr "inattiva"
+
+msgid "Disabled"
+msgstr "disabilitata"
+
+msgid "Idle"
+msgstr "inattiva"
+
+msgid "Active"
+msgstr "attiva"
+
+msgid "Unknown"
+msgstr "sconosciuto"

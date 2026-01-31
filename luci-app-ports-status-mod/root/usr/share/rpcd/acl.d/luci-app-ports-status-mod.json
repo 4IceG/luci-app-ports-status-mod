@@ -5,7 +5,8 @@
       "uci": [ "*" ],
       "ubus": {
         "luci": [ "getBuiltinEthernetPorts" ],
-        "file": [ "read", "write" ]
+        "ports-status-mod": [ "getPortsStatus" ],
+        "file": [ "read" ]
       },
       "file": {
         "/etc/user_defined_ports.json": [ "read" ],
@@ -15,12 +16,13 @@
     },
     "write": {
       "file": {
-        "/etc/user_defined_ports.json.bak": [ "write" ],
-        "/etc/user_defined_ports.json": [ "write" ]
+        "/etc/user_defined_ports.json": [ "write" ],
+        "/etc/user_defined_ports.json.bak": [ "write" ]
       },
       "ubus": {
         "file": [ "write" ],
-        "luci": [ "getBuiltinEthernetPorts" ]
+        "luci": [ "getBuiltinEthernetPorts" ],
+        "ports-status-mod": [ "setPortStatus" ]
       }
     }
   }

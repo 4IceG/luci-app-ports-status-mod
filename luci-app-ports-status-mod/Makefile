@@ -12,8 +12,8 @@ LUCI_TITLE:=Small modification of Ports Status
 LUCI_DEPENDS:=+luci-mod-admin-full
 LUCI_PKGARCH:=all
 PKG_LICENSE:=MIT
-PKG_VERSION:=1.0.1
-PKG_RELEASE:=20251209
+PKG_VERSION:=1.0.3
+PKG_RELEASE:=20260131
 
 
 define Package/luci-app-ports-status-mod/conffiles

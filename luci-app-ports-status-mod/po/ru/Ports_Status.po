@@ -2,7 +2,7 @@ msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8"
 
 msgid "Edit Port Label"
-msgstr "Изменить метку порта"
+msgstr "Редактировать метку порта"
 
 msgid "Enter new label for this port:"
 msgstr "Введите новую метку для этого порта:"
@@ -26,13 +26,13 @@ msgid "Port configuration saved successfully"
 msgstr "Конфигурация порта успешно сохранена"
 
 msgid "Port order saved"
-msgstr "Порядок портов сохранён"
+msgstr "Порядок портов сохранен"
 
 msgid "Click to edit label"
-msgstr "Нажмите для изменения метки"
+msgstr "Нажмите, чтобы изменить метку"
 
 msgid "Hold to drag and reorder"
-msgstr "Удерживайте для перетаскивания и изменения порядка"
+msgstr "Удерживайте, чтобы перетащить и изменить порядок"
 
 msgid "Label max 9 chars, description max 50 chars."
 msgstr "Метка макс. 9 символов, описание макс. 50 символов."
@@ -59,7 +59,7 @@ msgid "Invalid configuration format"
 msgstr "Неверный формат конфигурации"
 
 msgid "Restore configuration"
-msgstr "Восстановить конфигурацию"
+msgstr "Восстановление конфигурации"
 
 msgid "This will overwrite current ports configuration. Continue?"
 msgstr "Это перезапишет текущую конфигурацию портов. Продолжить?"
@@ -71,10 +71,10 @@ msgid "File restore failed: %s"
 msgstr "Не удалось восстановить файл: %s"
 
 msgid "Save .json file"
-msgstr "Сохранить .json файл"
+msgstr "Сохранить файл .json"
 
 msgid "Upload .json file"
-msgstr "Загрузить .json файл"
+msgstr "Загрузить файл .json"
 
 msgid "Cannot save empty configuration"
 msgstr "Невозможно сохранить пустую конфигурацию"
@@ -110,7 +110,7 @@ msgid "Restore failed: %s"
 msgstr "Восстановление не удалось: %s"
 
 msgid "Backup file is corrupted: %s"
-msgstr "Файл резервной копии повреждён: %s"
+msgstr "Файл резервной копии поврежден: %s"
 
 msgid "Error reading backup: %s"
 msgstr "Ошибка чтения резервной копии: %s"
@@ -118,5 +118,32 @@ msgstr "Ошибка чтения резервной копии: %s"
 msgid "Restore backup .bak"
 msgstr "Восстановить резервную копию .bak"
 
-msgid ""
-msgstr ""
+msgid "Change port state"
+msgstr "Изменить состояние порта"
+
+msgid "Enable this port"
+msgstr "Включить этот порт"
+
+msgid "Enable port"
+msgstr "Включить порт"
+
+msgid "Disable this port"
+msgstr "Отключить этот порт"
+
+msgid "Disable port"
+msgstr "Отключить порт"
+
+msgid "Down"
+msgstr "неактивен"
+
+msgid "Disabled"
+msgstr "отключен"
+
+msgid "Idle"
+msgstr "простаивает"
+
+msgid "Active"
+msgstr "активен"
+
+msgid "Unknown"
+msgstr "неизвестно"
