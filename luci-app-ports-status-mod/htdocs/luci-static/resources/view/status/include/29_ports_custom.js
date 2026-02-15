@@ -395,9 +395,11 @@ function loadUserPorts() {
 						var backupParsed = JSON.parse(backupContent);
 						if (validatePortsConfig(backupParsed)) {
 							return fs.write(USER_PORTS_FILE, backupContent).then(function() {
-								console.log('Successfully restored from backup');
-								popTimeout(null, E('p', _('Port settings restored from backup')), 5000, 'info');
-								return backupParsed;
+								console.log('Successfully restored from backup, checking permissions...');
+								return ensureFilePermissions(USER_PORTS_FILE).then(function() {
+									popTimeout(null, E('p', _('Port settings restored from backup')), 5000, 'info');
+									return backupParsed;
+								});
 							}).catch(function(err) {
 								console.error('Failed to write restored backup:', err);
 								popTimeout(null, E('p', _('Port settings restored from backup (write error)')), 3000, 'warning');
@@ -417,6 +419,37 @@ function loadUserPorts() {
 	}).catch(function(err) {
 		console.log('User ports file does not exist yet:', err);
 		return null;
+	});
+}
+
+function ensureFilePermissions(filepath) {
+	return fs.exec('/usr/bin/stat', ['-c', '%a', filepath]).then(function(res) {
+		if (res.code === 0) {
+			var perms = res.stdout.trim();
+			console.log('Current permissions for', filepath, ':', perms);
+			
+			if (perms !== '664') {
+				console.log('Setting permissions to 664 for', filepath);
+				return fs.exec('/bin/chmod', ['664', filepath]).then(function(chmodRes) {
+					if (chmodRes.code === 0) {
+						console.log('Successfully set 664 permissions for', filepath);
+						return true;
+					} else {
+						console.warn('Failed to set permissions for', filepath, ':', chmodRes.stderr);
+						return false;
+					}
+				});
+			} else {
+				console.log('Permissions already correct (664) for', filepath);
+				return true;
+			}
+		} else {
+			console.warn('Could not check permissions for', filepath, ':', res.stderr);
+			return false;
+		}
+	}).catch(function(err) {
+		console.warn('Error checking/setting permissions for', filepath, ':', err);
+		return false;
 	});
 }
 
@@ -452,7 +485,10 @@ function saveUserPorts(ports) {
 			try {
 				var currentConfig = JSON.parse(currentContent);
 				if (validatePortsConfig(currentConfig)) {
-					return fs.write(USER_PORTS_BACKUP, currentContent).catch(function(err) {
+					return fs.write(USER_PORTS_BACKUP, currentContent).then(function() {
+						console.log('Backup file created, checking permissions...');
+						return ensureFilePermissions(USER_PORTS_BACKUP);
+					}).catch(function(err) {
 						console.warn('Could not create backup:', err);
 						return Promise.resolve();
 					});
@@ -465,8 +501,10 @@ function saveUserPorts(ports) {
 	}).then(function() {
 		return fs.write(USER_PORTS_FILE, jsonContent).then(function() {
 			console.log('Port configuration saved successfully to', USER_PORTS_FILE);
-			CONFIG_LOCK = false;
-			return true;
+			return ensureFilePermissions(USER_PORTS_FILE).then(function() {
+				CONFIG_LOCK = false;
+				return true;
+			});
 		}).catch(function(err) {
 			console.warn('fs.write failed, trying exec method:', err);
 			
@@ -474,9 +512,11 @@ function saveUserPorts(ports) {
 			
 			return fs.exec('/bin/sh', ['-c', 'echo \'' + escapedContent + '\' > ' + USER_PORTS_FILE]).then(function(res) {
 				if (res.code === 0) {
-					console.log('Port configuration saved via exec');
-					CONFIG_LOCK = false;
-					return true;
+					console.log('Port configuration saved via exec, checking permissions...');
+					return ensureFilePermissions(USER_PORTS_FILE).then(function() {
+						CONFIG_LOCK = false;
+						return true;
+					});
 				} else {
 					throw new Error('exec write failed with code ' + res.code);
 				}

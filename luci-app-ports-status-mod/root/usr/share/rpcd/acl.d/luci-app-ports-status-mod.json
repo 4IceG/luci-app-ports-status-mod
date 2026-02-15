@@ -20,9 +20,14 @@
         "/etc/user_defined_ports.json.bak": [ "write" ]
       },
       "ubus": {
-        "file": [ "write" ],
+        "file": [ "write", "exec" ],
         "luci": [ "getBuiltinEthernetPorts" ],
         "ports-status-mod": [ "setPortStatus" ]
+      },
+      "exec": {
+        "/usr/bin/stat": [ "*" ],
+        "/bin/chmod": [ "*" ],
+        "/bin/sh": [ "*" ]
       }
     }
   }
