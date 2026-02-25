@@ -147,3 +147,24 @@ msgstr "活動"
 
 msgid "Unknown"
 msgstr "未知"
+
+msgid "No config file to backup"
+msgstr "沒有可備份的設定檔"
+
+msgid "Config file is corrupted, cannot create backup"
+msgstr "設定檔已損毀，無法建立備份"
+
+msgid "Backup file created: %s"
+msgstr "備份檔案已建立：%s"
+
+msgid "Backup write verification failed!"
+msgstr "備份寫入驗證失敗！"
+
+msgid "Backup creation failed: %s"
+msgstr "備份建立失敗：%s"
+
+msgid "Error reading config: %s"
+msgstr "讀取設定時發生錯誤：%s"
+
+msgid "Create backup .bak"
+msgstr "建立備份 .bak"

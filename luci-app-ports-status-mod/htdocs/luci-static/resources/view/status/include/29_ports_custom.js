@@ -11,7 +11,24 @@
 
 (function() {
 	var style = document.createElement('style');
-	style.textContent = '@keyframes status-blink { 0%, 60%, 100% { opacity: 1; } 30% { opacity: 0.2; } }';
+	style.textContent = [
+		'@keyframes status-blink { 0%, 60%, 100% { opacity: 1; } 30% { opacity: 0.2; } }',
+		'.ports-operation-status {',
+		'  display: none;',
+		'  padding: 10px 14px;',
+		'  border: 1px solid var(--border-color-medium);',
+		'  border-radius: 5px;',
+		'  margin: 0 0 10px 0;',
+		'  font-size: 90%;',
+		'}',
+		'.ports-operation-status.active {',
+		'  display: block;',
+		'}',
+		'.ports-operation-status .spinning {',
+		'  display: inline-block;',
+		'  margin-right: 8px;',
+		'}'
+	].join('\n');
 	document.head.appendChild(style);
 })();
 
@@ -48,8 +65,32 @@ var isDragging = false;
 var draggedElement = null;
 var originalPorts = [];
 
-function popTimeout(a, message, timeout, severity) {
-    ui.addTimeLimitedNotification(a, message, timeout, severity)
+var _portsStatusTimer = null;
+
+function showPortsStatus(message) {
+	var statusBox = document.getElementById('ports-operation-status');
+	if (!statusBox) return;
+	statusBox.innerHTML = '';
+	var msgText = (message && message.textContent !== undefined)
+		? message.textContent
+		: (typeof message === 'string' ? message : '');
+	statusBox.appendChild(E('span', {'class': 'spinning'}, msgText));
+	statusBox.classList.add('active');
+}
+
+function hidePortsStatus() {
+	var statusBox = document.getElementById('ports-operation-status');
+	if (!statusBox) return;
+	statusBox.classList.remove('active');
+}
+
+function showPortsStatusTimeout(message, timeout) {
+	showPortsStatus(message);
+	if (_portsStatusTimer) clearTimeout(_portsStatusTimer);
+	_portsStatusTimer = setTimeout(function() {
+		hidePortsStatus();
+		_portsStatusTimer = null;
+	}, timeout || 4000);
 }
 
 function isString(v)
@@ -367,90 +408,79 @@ function validatePortsConfig(config) {
 
 function loadUserPorts() {
 	return L.resolveDefault(fs.read(USER_PORTS_FILE), null).then(function(content) {
-		var isEmptyOrInvalid = false;
-		var parsed = null;
 		if (!content || content.trim() === '' || content.trim() === '[]') {
-			console.log('User ports file is empty or contains only []');
-			isEmptyOrInvalid = true;
-		} else {
-			try {
-				parsed = JSON.parse(content);
-				if (Array.isArray(parsed) && parsed.length === 0) {
-					console.log('User ports file contains empty array');
-					isEmptyOrInvalid = true;
-				} else if (!validatePortsConfig(parsed)) {
-					console.error('Invalid ports configuration detected');
-					isEmptyOrInvalid = true;
-				}
-			} catch(e) {
-				console.error('Failed to parse user ports config:', e);
-				isEmptyOrInvalid = true;
-			}
+			console.log('User ports file is empty or missing');
+			return null;
 		}
-		if (isEmptyOrInvalid) {
-			console.log('Attempting automatic restore from backup...');
-			return L.resolveDefault(fs.read(USER_PORTS_BACKUP), null).then(function(backupContent) {
-				if (backupContent) {
-					try {
-						var backupParsed = JSON.parse(backupContent);
-						if (validatePortsConfig(backupParsed)) {
-							return fs.write(USER_PORTS_FILE, backupContent).then(function() {
-								console.log('Successfully restored from backup, checking permissions...');
-								return ensureFilePermissions(USER_PORTS_FILE).then(function() {
-									popTimeout(null, E('p', _('Port settings restored from backup')), 5000, 'info');
-									return backupParsed;
-								});
-							}).catch(function(err) {
-								console.error('Failed to write restored backup:', err);
-								popTimeout(null, E('p', _('Port settings restored from backup (write error)')), 3000, 'warning');
-								return backupParsed;
-							});
-						}
-					} catch(e) {
-						console.error('Backup file parsing failed:', e);
-					}
-				}
-				console.log('No valid backup found');
+		try {
+			var parsed = JSON.parse(content);
+			if (Array.isArray(parsed) && parsed.length === 0) {
+				console.log('User ports file contains empty array');
 				return null;
-			});
+			}
+			if (!validatePortsConfig(parsed)) {
+				console.error('Invalid ports configuration detected');
+				ui.addNotification(null, E('p', _('Port config file is corrupted. Use "Restore backup .bak" from edit modal.')), 'error');
+				return null;
+			}
+			console.log('Successfully loaded user ports config:', parsed.length, 'ports');
+			return parsed;
+		} catch(e) {
+			console.error('Failed to parse user ports config:', e);
+			ui.addNotification(null, E('p', _('Port config parse error. Use "Restore backup .bak" from edit modal.')), 'error');
+			return null;
 		}
-		console.log('Successfully loaded user ports config');
-		return parsed;
 	}).catch(function(err) {
 		console.log('User ports file does not exist yet:', err);
 		return null;
 	});
 }
 
-function ensureFilePermissions(filepath) {
-	return fs.exec('/usr/bin/stat', ['-c', '%a', filepath]).then(function(res) {
+
+function setFileReadOnly(filepath) {
+	return fs.exec('/bin/chmod', ['444', filepath]).then(function(res) {
 		if (res.code === 0) {
-			var perms = res.stdout.trim();
-			console.log('Current permissions for', filepath, ':', perms);
-			
-			if (perms !== '664') {
-				console.log('Setting permissions to 664 for', filepath);
-				return fs.exec('/bin/chmod', ['664', filepath]).then(function(chmodRes) {
-					if (chmodRes.code === 0) {
-						console.log('Successfully set 664 permissions for', filepath);
-						return true;
-					} else {
-						console.warn('Failed to set permissions for', filepath, ':', chmodRes.stderr);
-						return false;
-					}
-				});
-			} else {
-				console.log('Permissions already correct (664) for', filepath);
-				return true;
-			}
+			console.log('File set to read-only (444):', filepath);
 		} else {
-			console.warn('Could not check permissions for', filepath, ':', res.stderr);
-			return false;
+			console.warn('Failed to set read-only on', filepath, ':', res.stderr);
 		}
 	}).catch(function(err) {
-		console.warn('Error checking/setting permissions for', filepath, ':', err);
+		console.warn('chmod 444 error for', filepath, ':', err);
+	});
+}
+
+function ensureFileWritable(filepath) {
+	return fs.exec('/bin/chmod', ['644', filepath]).then(function(res) {
+		if (res.code === 0) {
+			console.log('File set to writable (644):', filepath);
+			return true;
+		} else {
+			return fs.exec('/bin/touch', [filepath]).then(function(touchRes) {
+				if (touchRes.code === 0) {
+					return fs.exec('/bin/chmod', ['644', filepath]).then(function() { return true; });
+				}
+				console.warn('Could not create or chmod file:', filepath);
+				return false;
+			});
+		}
+	}).catch(function(err) {
+		console.warn('ensureFileWritable error for', filepath, ':', err);
 		return false;
 	});
+}
+
+function verifyFileSaved(filepath, expectedContent) {
+	return L.resolveDefault(fs.read(filepath), null).then(function(content) {
+		if (!content) {
+			console.error('Verification failed: file empty after save');
+			return false;
+		}
+		var ok = content.trim().substring(0, 80) === expectedContent.trim().substring(0, 80);
+		if (!ok) {
+			console.error('Verification failed: content mismatch');
+		}
+		return ok;
+	}).catch(function() { return false; });
 }
 
 function saveUserPorts(ports) {
@@ -480,69 +510,31 @@ function saveUserPorts(ports) {
 	
 	var jsonContent = JSON.stringify(config, null, 2);
 	
-	return L.resolveDefault(fs.read(USER_PORTS_FILE), null).then(function(currentContent) {
-		if (currentContent) {
-			try {
-				var currentConfig = JSON.parse(currentContent);
-				if (validatePortsConfig(currentConfig)) {
-					return fs.write(USER_PORTS_BACKUP, currentContent).then(function() {
-						console.log('Backup file created, checking permissions...');
-						return ensureFilePermissions(USER_PORTS_BACKUP);
-					}).catch(function(err) {
-						console.warn('Could not create backup:', err);
-						return Promise.resolve();
-					});
-				}
-			} catch(e) {
-				console.warn('Current config corrupted, will overwrite');
-			}
+	return ensureFileWritable(USER_PORTS_FILE).then(function(writable) {
+		if (!writable) {
+			CONFIG_LOCK = false;
+			var msg = _('Cannot make config file writable. Check /etc permissions.');
+			ui.addNotification(null, E('p', msg), 'error');
+			throw new Error(msg);
 		}
-		return Promise.resolve();
+		return fs.write(USER_PORTS_FILE, jsonContent);
 	}).then(function() {
-		return fs.write(USER_PORTS_FILE, jsonContent).then(function() {
-			console.log('Port configuration saved successfully to', USER_PORTS_FILE);
-			return ensureFilePermissions(USER_PORTS_FILE).then(function() {
+		return verifyFileSaved(USER_PORTS_FILE, jsonContent).then(function(ok) {
+			if (!ok) {
+				CONFIG_LOCK = false;
+				var msg = _('Save verification failed - file content mismatch!');
+				ui.addNotification(null, E('p', msg), 'error');
+				throw new Error(msg);
+			}
+			console.log('Save verified successfully for', USER_PORTS_FILE);
+			return setFileReadOnly(USER_PORTS_FILE).then(function() {
 				CONFIG_LOCK = false;
 				return true;
-			});
-		}).catch(function(err) {
-			console.warn('fs.write failed, trying exec method:', err);
-			
-			var escapedContent = jsonContent.replace(/\\/g, '\\\\').replace(/'/g, "'\\''").replace(/"/g, '\\"');
-			
-			return fs.exec('/bin/sh', ['-c', 'echo \'' + escapedContent + '\' > ' + USER_PORTS_FILE]).then(function(res) {
-				if (res.code === 0) {
-					console.log('Port configuration saved via exec, checking permissions...');
-					return ensureFilePermissions(USER_PORTS_FILE).then(function() {
-						CONFIG_LOCK = false;
-						return true;
-					});
-				} else {
-					throw new Error('exec write failed with code ' + res.code);
-				}
-			}).catch(function(err2) {
-				console.error('Both write methods failed:', err2);
-				CONFIG_LOCK = false;
-				
-				return fs.stat('/etc').then(function(stat) {
-					var errorMsg = _('Cannot save port configuration. ') + 
-					               _('Directory /etc may be read-only or insufficient permissions. ') + 
-					               _('Try running: chmod 755 /etc && touch %s && chmod 644 %s').format(USER_PORTS_FILE, USER_PORTS_FILE);
-					
-					ui.addNotification(null, E('p', {}, [
-						E('strong', {}, _('Save Error')),
-						E('br'),
-						errorMsg,
-						E('br'),
-						E('small', {}, _('Original error: %s').format(err.message))
-					]), 'error');
-					
-					throw new Error(errorMsg);
-				});
 			});
 		});
 	}).catch(function(err) {
 		CONFIG_LOCK = false;
+		console.error('saveUserPorts failed:', err);
 		throw err;
 	});
 }
@@ -738,7 +730,6 @@ function showEditLabelModal(port, labelElement, descriptionElement, statusElemen
 				});
 				link.click();
 				URL.revokeObjectURL(link.href);
-				popTimeout(null, E('p', _('Configuration file downloaded')), 3000, 'info');
 			} else {
 				ui.addNotification(null, E('p', _('Configuration file not found')), 'warning');
 			}
@@ -789,7 +780,7 @@ function showEditLabelModal(port, labelElement, descriptionElement, statusElemen
 									'click': function() {
 										fs.write(USER_PORTS_FILE, JSON.stringify(config, null, 2)).then(function() {
 											ui.hideModal();
-											popTimeout(null, E('p', _('Configuration restored successfully. Reloading...')), 3000, 'info');
+											ui.addNotification(null, E('p', _('Configuration restored successfully. Reloading...')), 'info');
 											setTimeout(function() {
 												window.location.reload();
 											}, 1500);
@@ -846,12 +837,17 @@ function showEditLabelModal(port, labelElement, descriptionElement, statusElemen
 						E('button', {
 							'class': 'cbi-button cbi-button-neutral',
 							'click': function() {
-								fs.write(USER_PORTS_FILE, backupContent).then(function() {
+								ensureFileWritable(USER_PORTS_FILE).then(function() {
+									return fs.write(USER_PORTS_FILE, backupContent);
+								}).then(function() {
+									return verifyFileSaved(USER_PORTS_FILE, backupContent);
+								}).then(function(ok) {
+									if (!ok) throw new Error('Verification failed');
+									return setFileReadOnly(USER_PORTS_FILE);
+								}).then(function() {
 									ui.hideModal();
-									popTimeout(null, E('p', _('Configuration restored from backup. Reloading...')), 3000, 'info');
-									setTimeout(function() {
-										window.location.reload();
-									}, 1500);
+									ui.addNotification(null, E('p', _('Configuration restored from backup. Reloading...')), 'info');
+									setTimeout(function() { window.location.reload(); }, 1500);
 								}).catch(function(err) {
 									ui.hideModal();
 									ui.addNotification(null, E('p', _('Restore failed: %s').format(err.message)), 'error');
@@ -869,13 +865,49 @@ function showEditLabelModal(port, labelElement, descriptionElement, statusElemen
 		});
 	};
 	
-	var backupComboButton = new ui.ComboButton('_save', {
+	var handleCreateBackup = function() {
+		L.resolveDefault(fs.read(USER_PORTS_FILE), null).then(function(content) {
+			if (!content) {
+				ui.addNotification(null, E('p', _('No config file to backup')), 'warning');
+				return;
+			}
+			try {
+				var parsed = JSON.parse(content);
+				if (!validatePortsConfig(parsed)) throw new Error('invalid');
+			} catch(e) {
+				ui.addNotification(null, E('p', _('Config file is corrupted, cannot create backup')), 'error');
+				return;
+			}
+			ensureFileWritable(USER_PORTS_BACKUP).then(function() {
+				return fs.write(USER_PORTS_BACKUP, content);
+			}).then(function() {
+				return verifyFileSaved(USER_PORTS_BACKUP, content);
+			}).then(function(ok) {
+				if (ok) {
+					return setFileReadOnly(USER_PORTS_BACKUP).then(function() {
+						ui.addNotification(null, E('p', _('Backup file created: %s').format(USER_PORTS_BACKUP)), 'info');
+					});
+				} else {
+					ui.addNotification(null, E('p', _('Backup write verification failed!')), 'error');
+				}
+			}).catch(function(err) {
+				ui.addNotification(null, E('p', _('Backup creation failed: %s').format(err.message)), 'error');
+			});
+		}).catch(function(err) {
+			ui.addNotification(null, E('p', _('Error reading config: %s').format(err.message)), 'error');
+		});
+	};
+
+	var backupComboButton = new ui.ComboButton('_backup', {
+		'_backup': _('Create backup .bak'),
 		'_save': _('Save .json file'),
 		'_upload': _('Upload .json file'),
 		'_restore_backup': _('Restore backup .bak')
 	}, {
 		'click': function(ev, name) {
-			if (name === '_save') {
+			if (name === '_backup') {
+				handleCreateBackup();
+			} else if (name === '_save') {
 				handleDownloadConfig();
 			} else if (name === '_upload') {
 				handleUploadConfig(ev);
@@ -884,9 +916,10 @@ function showEditLabelModal(port, labelElement, descriptionElement, statusElemen
 			}
 		},
 		'classes': {
+			'_backup': 'cbi-button cbi-button-action',
 			'_save': 'cbi-button cbi-button-neutral',
 			'_upload': 'cbi-button cbi-button-neutral',
-			'_restore_backup': 'cbi-button cbi-button-action'
+			'_restore_backup': 'cbi-button cbi-button-negative'
 		}
 	}).render();
 	
@@ -966,20 +999,20 @@ function showEditLabelModal(port, labelElement, descriptionElement, statusElemen
 											port._currentOperstate = newOperstate;
 											
 											var msg = newStatusEnabled ? _('Port has been enabled successfully') : _('Port has been disabled successfully');
-											popTimeout(null, E('p', msg), 5000, 'info');
+											showPortsStatusTimeout(msg, 5000);
 										} else {
-											popTimeout(null, E('p', _('Failed to change port status')), 5000, 'error');
+											showPortsStatusTimeout(_('Failed to change port status'), 5000);
 										}
 									})
 									.catch(function(err) {
-										popTimeout(null, E('p', _('Error changing port status')), 5000, 'error');
+										showPortsStatusTimeout(_('Error changing port status'), 5000);
 									})
 							);
 						}
 						
 						Promise.all(promises).then(function() {
 							ui.hideModal();
-							popTimeout(null, E('p', _('Port configuration saved successfully')), 5000, 'info');
+							showPortsStatusTimeout(_('Port configuration saved successfully'), 5000);
 							poll.start();
 						}).catch(function(err) {
 							ui.hideModal();
@@ -1120,7 +1153,7 @@ function makeDraggable(element, port, container, ports) {
                 isDragging = false;
                 draggedElement = null;
                 isTouch = false;
-                popTimeout(null, E('p', _('Port order saved')), 5000, 'info');
+                showPortsStatusTimeout(_('Port order saved'), 4000);
                 poll.start();
             }).catch(function(err) {
                 isDragging = false;
@@ -1175,7 +1208,7 @@ function makeDraggable(element, port, container, ports) {
         clickStart = { x: clientX, y: clientY };
         hasMoved = false;
 
-        var delay = isTouch ? 400 : 200;
+        var delay = isTouch ? 600 : 300;
         
         clickTimer = setTimeout(function() {
             if (!hasMoved) {
@@ -1212,7 +1245,7 @@ function makeDraggable(element, port, container, ports) {
                 Math.pow(clientY - clickStart.y, 2)
             );
             
-            if (distance > 5) {
+            if (distance > 10) {
                 hasMoved = true;
                 clearTimeout(clickTimer);
                 clickTimer = null;
@@ -1327,10 +1360,17 @@ return baseclass.extend({
 		var known_ports = mergePortConfigs(detected_ports, userConfig);
 		originalPorts = known_ports.slice();
 
+		var statusBar = E('div', {
+			'id': 'ports-operation-status',
+			'class': 'ports-operation-status'
+		});
+
 		var container = E('div', { 
 			'class': 'ports-container',
 			'style': 'display:grid;grid-template-columns:repeat(auto-fit, minmax(70px, 1fr));margin-bottom:1em' 
 		});
+
+		var wrapper = E('div', {}, [ statusBar, container ]);
 
 		known_ports.forEach(function(port) {
 			var speed = port.netdev.getSpeed(),
@@ -1434,12 +1474,13 @@ return baseclass.extend({
 			]);
 
 			portBox.__port__ = port;
+
 			makeEditable(labelDiv, descriptionDiv, statusElement, port, known_ports);
 			makeDraggable(portBox, port, container, known_ports);
 			
 			container.appendChild(portBox);
 		});
 
-		return container;
+		return wrapper;
 	}
 });

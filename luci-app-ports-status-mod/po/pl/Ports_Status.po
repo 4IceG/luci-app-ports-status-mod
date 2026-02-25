@@ -147,3 +147,24 @@ msgstr "aktywny"
 
 msgid "Unknown"
 msgstr "nieznany"
+
+msgid "No config file to backup"
+msgstr "Brak pliku konfiguracji do utworzenia kopii zapasowej"
+
+msgid "Config file is corrupted, cannot create backup"
+msgstr "Plik konfiguracji jest uszkodzony, nie można utworzyć kopii zapasowej"
+
+msgid "Backup file created: %s"
+msgstr "Plik kopii zapasowej został utworzony: %s"
+
+msgid "Backup write verification failed!"
+msgstr "Weryfikacja zapisu kopii zapasowej nie powiodła się!"
+
+msgid "Backup creation failed: %s"
+msgstr "Tworzenie kopii zapasowej nie powiodło się: %s"
+
+msgid "Error reading config: %s"
+msgstr "Błąd odczytu konfiguracji: %s"
+
+msgid "Create backup .bak"
+msgstr "Utwórz kopię .bak"

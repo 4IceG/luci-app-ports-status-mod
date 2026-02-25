@@ -10,6 +10,8 @@
 #  
 ##################################################################################################################
 
+ACTIVITY_THRESHOLD=2000
+
 check_activity() {
     local port="$1"
     local port_path="/sys/class/net/$port"
@@ -22,19 +24,20 @@ check_activity() {
         return
     fi
     
-    local rx1=$(cat "$rx_bytes_file" 2>/dev/null || echo "0")
-    local tx1=$(cat "$tx_bytes_file" 2>/dev/null || echo "0")
+    local rx1 tx1 rx2 tx2
+    rx1=$(cat "$rx_bytes_file" 2>/dev/null || echo "0")
+    tx1=$(cat "$tx_bytes_file" 2>/dev/null || echo "0")
     
-    sleep 1
+    sleep 0.5
     
-    local rx2=$(cat "$rx_bytes_file" 2>/dev/null || echo "0")
-    local tx2=$(cat "$tx_bytes_file" 2>/dev/null || echo "0")
+    rx2=$(cat "$rx_bytes_file" 2>/dev/null || echo "0")
+    tx2=$(cat "$tx_bytes_file" 2>/dev/null || echo "0")
     
     local rx_diff=$((rx2 - rx1))
     local tx_diff=$((tx2 - tx1))
     local total_diff=$((rx_diff + tx_diff))
     
-    if [ "$total_diff" -gt 0 ]; then
+    if [ "$total_diff" -gt "$ACTIVITY_THRESHOLD" ]; then
         echo "active"
     else
         echo "idle"
@@ -94,25 +97,44 @@ get_port_status() {
 }
 
 get_all_ports_status() {
-    json_init
-    
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local pids=""
+
     for port_path in /sys/class/net/*; do
         if [ -d "$port_path" ]; then
-            port_name=$(basename "$port_path")            
+            port_name=$(basename "$port_path")
             case "$port_name" in
                 lo|dummy*|tunl*|gre*|gretap*|sit*|ip6tnl*|ip6gre*|br-*)
                     continue
                     ;;
                 eth*|lan*|wan*|en*|sfp*)
                     if [ -f "$port_path/address" ]; then
-                        status=$(get_port_status "$port_name")
-                        json_add_string "$port_name" "$status"
+                        (
+                            status=$(get_port_status "$port_name")
+                            echo "${port_name}=${status}" > "$tmpdir/$port_name"
+                        ) &
+                        pids="$pids $!"
                     fi
                     ;;
             esac
         fi
     done
-    
+
+    for pid in $pids; do
+        wait "$pid" 2>/dev/null
+    done
+
+    json_init
+    for result_file in "$tmpdir"/*; do
+        [ -f "$result_file" ] || continue
+        line=$(cat "$result_file")
+        port_name="${line%%=*}"
+        status="${line#*=}"
+        json_add_string "$port_name" "$status"
+    done
+    rm -rf "$tmpdir"
+
     json_dump
 }
 

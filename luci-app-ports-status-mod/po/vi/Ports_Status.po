@@ -147,3 +147,24 @@ msgstr "hoạt động"
 
 msgid "Unknown"
 msgstr "không rõ"
+
+msgid "No config file to backup"
+msgstr "Không có tệp cấu hình để sao lưu"
+
+msgid "Config file is corrupted, cannot create backup"
+msgstr "Tệp cấu hình bị hỏng, không thể tạo bản sao lưu"
+
+msgid "Backup file created: %s"
+msgstr "Đã tạo tệp sao lưu: %s"
+
+msgid "Backup write verification failed!"
+msgstr "Xác minh ghi bản sao lưu thất bại!"
+
+msgid "Backup creation failed: %s"
+msgstr "Tạo bản sao lưu thất bại: %s"
+
+msgid "Error reading config: %s"
+msgstr "Lỗi khi đọc cấu hình: %s"
+
+msgid "Create backup .bak"
+msgstr "Tạo bản sao lưu .bak"

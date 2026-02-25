@@ -147,3 +147,24 @@ msgstr "активен"
 
 msgid "Unknown"
 msgstr "неизвестно"
+
+msgid "No config file to backup"
+msgstr "Нет файла конфигурации для резервного копирования"
+
+msgid "Config file is corrupted, cannot create backup"
+msgstr "Файл конфигурации повреждён, создание резервной копии невозможно"
+
+msgid "Backup file created: %s"
+msgstr "Резервный файл создан: %s"
+
+msgid "Backup write verification failed!"
+msgstr "Проверка записи резервной копии не удалась!"
+
+msgid "Backup creation failed: %s"
+msgstr "Создание резервной копии не удалось: %s"
+
+msgid "Error reading config: %s"
+msgstr "Ошибка чтения конфигурации: %s"
+
+msgid "Create backup .bak"
+msgstr "Создать резервную копию .bak"

@@ -147,3 +147,24 @@ msgstr "attiva"
 
 msgid "Unknown"
 msgstr "sconosciuto"
+
+msgid "No config file to backup"
+msgstr "Nessun file di configurazione da salvare"
+
+msgid "Config file is corrupted, cannot create backup"
+msgstr "Il file di configurazione è corrotto, impossibile creare il backup"
+
+msgid "Backup file created: %s"
+msgstr "File di backup creato: %s"
+
+msgid "Backup write verification failed!"
+msgstr "Verifica della scrittura del backup non riuscita!"
+
+msgid "Backup creation failed: %s"
+msgstr "Creazione del backup non riuscita: %s"
+
+msgid "Error reading config: %s"
+msgstr "Errore durante la lettura della configurazione: %s"
+
+msgid "Create backup .bak"
+msgstr "Crea backup .bak"
